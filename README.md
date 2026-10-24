@@ -4,7 +4,7 @@ A reusable multiplayer card-game framework with a first game, **Liar's Deck**. R
 
 ## Run locally
 
-Prerequisites: Java 21+, Node 22.13+ (Node 24 recommended), and either Docker, Podman, or a PostgreSQL 16 database.
+Prerequisites: Java 21, Node 22.22.2+ or 24.15+ (Node 24 recommended), and either Docker, Podman, or a PostgreSQL 16 database. CI tests Java 21 and both Node 22 and 24.
 
 ### Start PostgreSQL with Podman
 
@@ -191,13 +191,52 @@ Every room endpoint requires `Authorization: Bearer <device-token>`. The raw cre
 ## Verification
 
 ```bash
-./gradlew :server:test
+bash ./gradlew :server:check :server:bootJar
 node scripts/tests/start-dev.test.mjs
+node scripts/tests/clear-database.test.mjs
+node scripts/tests/ci-integration.test.mjs
 cd frontend
-npm test
+npm ci --include=optional
+npm run typecheck
+npm run test:coverage
 npm run build
 ```
 
-The Java suite covers readiness, departures, multi-tab presence, start gating, persistent balances, personal purchases, wins/streaks and emergency-stop permissions/recovery. Launcher tests run isolated mock services to verify startup ordering, copied scripts, dependency failures, disconnected Tailscale, timeouts and process cleanup without touching a database or Tailscale configuration. Frontend regressions cover lobby actions during reconnects, handshake/authentication and HTTP timeouts, device restoration, duplicate retry prevention, stale navigation, tied rankings, and turn-versus-pool edition ownership. The PostgreSQL/WebSocket smoke test completes actual games and checks payouts, records, individual purchases and no-payout stops.
+The Java suite covers readiness, departures, multi-tab presence, start gating, persistent balances, personal purchases, wins/streaks, emergency-stop permissions/recovery, token hashing/authentication boundaries, wallet arithmetic and reward locking. Launcher tests run isolated mock services to verify startup ordering, copied scripts, dependency failures, disconnected Tailscale, timeouts and process cleanup without touching a database or Tailscale configuration. Reset safety tests check invalid database names, arguments, ports, and non-mutating dry runs.
+
+`npm test` runs the isolated store regressions plus Vitest presentation/component tests. These cover reconnects, HTTP/authentication timeouts, stale navigation, private receipts, pending-versus-paid wallets, stable turn seats, tied rankings, modal focus/dismissal and private card rendering. `npm run typecheck` checks the application **and test/configuration code**. Browser tests use real HTTP/WebSocket services, not mocked game state.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push, pull request, and manual dispatch. It needs no repository secrets and never connects to your running game database or Tailscale account.
+
+| Job | Checks |
+| --- | --- |
+| Scripts and safety | Workflow validation, shell/JavaScript syntax, launcher regressions, database-reset safeguards, disposable integration-target guards |
+| Frontend (Node 22 and 24) | Clean locked install, TypeScript checks, store/presentation/React component tests, V8 coverage gates, production build |
+| Backend (Java 21) | Wrapper validation, JUnit/Mockito tests, H2 persistence tests, JaCoCo gates, executable Spring Boot jar |
+| PostgreSQL/WebSocket/browser | Disposable PostgreSQL 16 service, legacy migration/backfill, fresh Flyway startup, complete game/payout/purchase/rollback scenarios, Chromium desktop and mobile tests |
+| CI passed | Requires every job, including both frontend matrix entries, to succeed |
+
+Frontend coverage gates apply to `presentation.ts`, `Modal.tsx`, `Leaderboards.tsx`, and `GameFeedback.tsx`: 80% lines/statements, 75% functions, 70% branches. The VM-isolated store suite runs separately and is not counted in those coverage figures. Backend gates cover all production classes: 75% lines and 60% branches. A coverage regression below a gate fails CI.
+
+Test artifacts include JUnit XML, HTML/LCOV frontend coverage, JaCoCo HTML/XML, backend startup logs, and browser reports with failure screenshots/videos/traces (14-day retention). Successful builds also upload `frontend-dist` and `backend-jar` (7-day retention). Production jars use the stable filename `server/build/libs/bluff-table.jar`. There is no automatic deployment.
+
+Actions are pinned to commit SHAs, checkout credentials are not persisted, the workflow token is read-only, dependency caches are enabled, and superseded runs are cancelled. Dependabot proposes weekly updates for Actions, npm and Gradle. In GitHub branch protection/rulesets, select **CI passed** as the required check after its first run; that repository setting is not changed by these files.
+
+### Run the integration pipeline locally
+
+Create a **new disposable database** (not `blufftable`), build the jar, and install the browser once:
+
+```bash
+podman exec blufftable-db createdb -U blufftable blufftable_localqa
+bash ./gradlew :server:bootJar
+(cd frontend && npm ci --include=optional && npx playwright install chromium)
+QA_DATABASE=blufftable_localqa QA_RUNTIME=podman bash scripts/ci-integration.sh
+```
+
+The runner requires a `blufftable_*qa` database name, refuses an occupied backend port, starts its own backend on **8181**, and stops it on exit. Playwright starts/stops a separate Vite instance on **5174**. Neither port may already be in use. Browser tests run the same flows on desktop and mobile: persistent/duplicate identities, rename, create/join, host-only setup, play, challenger-only card reveals and forced-stop wallet rollback. Test rooms are removed, but QA accounts remain in this disposable database; remove it manually when finished. Do not reuse a database that contains real accounts or rooms.
+
+Use `QA_RUNTIME=docker QA_CONTAINER=YOUR_CONTAINER` for Docker, or `QA_RUNTIME=local PGHOST=127.0.0.1 PGUSER=blufftable PGPASSWORD=...` with installed `psql`. `PGPORT`, `PGUSER` and `PGPASSWORD` configure the backend's loopback database connection; container mode defaults to container `blufftable-db`. Set `QA_SKIP_BROWSER=true` to run only migrations and HTTP/WebSocket scenarios. For an already-running **QA** backend on 8181, the browser suite alone is `cd frontend && npm run test:e2e`.
 
 For real PostgreSQL/WebSocket smoke tests, run a separate backend against a **disposable database** and then `QA_ORIGIN=http://127.0.0.1:8181 node scripts/smoke-test.mjs`. This script creates test accounts and deletes its own room. Optional separate frontend QA: set `BLUFF_BACKEND_URL=http://127.0.0.1:8181` and `VITE_LOCAL_API_URL=http://127.0.0.1:8181`, then run `npm run dev -- --port 5174`. Do not point a second backend at a live database: startup intentionally releases interrupted games.

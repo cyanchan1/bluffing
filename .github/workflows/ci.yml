@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  scripts:
+    name: Scripts and safety checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Validate GitHub Actions workflow
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= .github/workflows/ci.yml
+      - name: Check shell and JavaScript syntax
+        run: |
+          bash -n gradlew
+          for script in scripts/*.sh; do bash -n "$script"; done
+          for script in scripts/*.mjs scripts/tests/*.mjs; do node --check "$script"; done
+      - name: Run launcher, database-reset and integration-target safety regressions
+        run: |
+          for suite in scripts/tests/*.test.mjs; do node "$suite"; done
+
+  frontend:
+    name: Frontend (Node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --include=optional
+      - name: Type-check application and tests
+        run: npm run typecheck
+      - name: Store, presentation and component tests with coverage gates
+        run: npm run test:coverage
+      - name: Build production frontend
+        run: npm run build
+      - name: Upload frontend reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-reports-node-${{ matrix.node }}
+          path: |
+            frontend/reports/
+            frontend/coverage/
+          retention-days: 14
+      - name: Upload production frontend
+        if: matrix.node == '24'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  backend:
+    name: Backend (Java 21)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      # Also validates the checked-in Gradle wrapper before executing it.
+      - uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5
+      - name: JUnit, H2 persistence, coverage gates and executable jar
+        run: bash ./gradlew --no-daemon --console=plain :server:check :server:bootJar
+      - name: Upload backend reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-reports
+          path: |
+            server/build/reports/
+            server/build/test-results/
+          retention-days: 14
+      - name: Upload executable backend
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-jar
+          path: server/build/libs/bluff-table.jar
+          if-no-files-found: error
+          retention-days: 7
+
+  integration:
+    name: PostgreSQL, WebSocket and browser integration
+    needs: [backend, frontend, scripts]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: blufftable_ciqa
+          POSTGRES_USER: blufftable
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U blufftable -d blufftable_ciqa"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CI: 'true'
+      QA_DATABASE: blufftable_ciqa
+      QA_RUNTIME: docker
+      PGUSER: blufftable
+      PGPASSWORD: ci-only-password
+      PGPORT: '5432'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: backend-jar
+          path: server/build/libs/
+      - run: npm ci --include=optional
+        working-directory: frontend
+      - name: Install Chromium and required system libraries
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Verify migrations, real deals and desktop/mobile UI
+        env:
+          QA_CONTAINER: ${{ job.services.postgres.id }}
+        run: bash scripts/ci-integration.sh
+      - name: Upload browser results and backend diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: integration-reports
+          path: |
+            server/build/ci/
+            frontend/reports/
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 14
+
+  ci:
+    name: CI passed
+    if: always()
+    needs: [scripts, frontend, backend, integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every job to pass (including matrix jobs)
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          printf '%s\n' "$JOB_RESULTS"
+          jq --exit-status 'all(.[]; .result == "success")' <<< "$JOB_RESULTS"

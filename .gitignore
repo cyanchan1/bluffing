@@ -2,6 +2,9 @@
 node_modules/
 frontend/dist/
 frontend/coverage/
+frontend/reports/
+frontend/playwright-report/
+frontend/test-results/
 .vite/
 *.tsbuildinfo
 frontend/vite.config.js

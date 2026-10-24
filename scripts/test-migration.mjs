@@ -23,5 +23,9 @@ DO $$ BEGIN
   IF (SELECT count(*) FROM room_memberships WHERE game_start_balance IS NOT NULL) <> 0 THEN RAISE EXCEPTION 'Migration created a live game checkpoint'; END IF;
 END $$;
 ROLLBACK;`
-execFileSync(process.env.QA_RUNTIME || 'podman',['exec','-i',process.env.QA_CONTAINER || 'blufftable-db','psql','-X','-v','ON_ERROR_STOP=1','-U','blufftable','-d',database],{input:sql,stdio:['pipe','pipe','pipe']})
+const args = ['-X', '-v', 'ON_ERROR_STOP=1', '-U', process.env.PGUSER || 'blufftable', '-d', database]
+const local = process.env.QA_RUNTIME === 'local'
+execFileSync(local ? 'psql' : process.env.QA_RUNTIME || 'podman',
+  local ? args : ['exec', '-i', process.env.QA_CONTAINER || 'blufftable-db', 'psql', ...args],
+  { input: sql, stdio: ['pipe', 'pipe', 'pipe'], timeout: 30_000 })
 console.log('PASS: V4 shared unlocks migrate to active and inactive personal memberships without changing balances; all test schema changes rolled back.')

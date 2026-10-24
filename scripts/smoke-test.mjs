@@ -8,6 +8,7 @@ async function request(player, path, body, method = 'POST', expected = 200) {
   const response = await fetch(`${origin}/api${path}`, {
     method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${player.token}` },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
   })
   assert.equal(response.status, expected, `${path}: ${await response.clone().text()}`)
   return expected === 204 ? null : response.json()
@@ -19,9 +20,14 @@ async function account(name) {
 }
 async function connect(player) {
   const ws = new WebSocket(origin.replace(/^http/, 'ws') + '/ws')
+  connections.push(ws)
   const messages = []
   ws.addEventListener('message', event => messages.push(JSON.parse(event.data)))
-  await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject })
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { ws.close(); reject(new Error('WebSocket handshake timed out')) }, 5000)
+    ws.onopen = () => { clearTimeout(timer); resolve() }
+    ws.onerror = error => { clearTimeout(timer); reject(error) }
+  })
   const send = (type, payload = {}) => ws.send(JSON.stringify({type, payload}))
   const wait = async (predicate) => {
     const until = Date.now() + 5000
@@ -33,7 +39,6 @@ async function connect(player) {
     throw new Error(`Timed out waiting for websocket event: ${JSON.stringify(messages)}`)
   }
   send('AUTH', {deviceToken: player.token}); await wait(message => message.type === 'CONNECTED')
-  connections.push(ws)
   return {send, wait, ws}
 }
 
@@ -118,8 +123,9 @@ try {
   assert.match(stopped.notice,/restored to its pre-deal balance/)
   console.log('PASS: PostgreSQL migration, presence/departures, real game payouts, win/streak records, personal skin ownership, shared edition visibility, and pre-deal wallet rollback.')
 } finally {
-  if (room) await request(host, `/rooms/${room.id}`, undefined, 'DELETE', 204)
-  connections.forEach(ws => ws.close())
+  try {
+    if (room) await request(host, `/rooms/${room.id}`, undefined, 'DELETE', 204)
+  } finally { connections.forEach(ws => ws.close()) }
 }
 
 if (process.env.QA_KEEP_BOTS === 'true') {

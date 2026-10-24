@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": { "allowImportingTsExtensions": true },
+  "include": ["src", "tests/**/*.ts", "tests/**/*.tsx", "e2e", "vitest.config.ts", "playwright.config.ts"]
+}

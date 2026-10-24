@@ -1,5 +1,6 @@
 plugins {
     java
+    jacoco
     id("org.springframework.boot") version "3.5.6"
     id("io.spring.dependency-management") version "1.1.7"
 }
@@ -27,5 +28,39 @@ dependencies {
     testRuntimeOnly("com.h2database:h2")
 }
 
-tasks.withType<Test> { useJUnitPlatform() }
+jacoco { toolVersion = "0.8.14" }
+
+tasks.withType<Test> {
+    useJUnitPlatform()
+    testLogging { events("failed", "skipped") }
+    finalizedBy(tasks.jacocoTestReport)
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+}
+
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.test)
+    violationRules {
+        rule {
+            limit {
+                counter = "LINE"
+                minimum = "0.75".toBigDecimal()
+            }
+            limit {
+                counter = "BRANCH"
+                minimum = "0.60".toBigDecimal()
+            }
+        }
+    }
+}
+
+tasks.check { dependsOn(tasks.jacocoTestCoverageVerification) }
+
+tasks.bootJar { archiveFileName.set("bluff-table.jar") }
 

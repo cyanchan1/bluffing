@@ -56,7 +56,8 @@ const root = process.env.MOCK_ROOT;
 const health = process.argv.at(-1).endsWith('/api/health');
 const ready = path.join(root, health ? 'backend-ready' : 'frontend-ready');
 const pid = path.join(root, health ? 'backend.pid' : 'frontend.pid');
-if (!fs.existsSync(pid) || (health && process.env.MOCK_FAIL === 'health')) process.exit(22);
+if (!fs.existsSync(pid) || (health && process.env.MOCK_FAIL === 'health')
+    || process.env.MOCK_FAIL === (health ? 'backend' : 'frontend')) process.exit(22);
 if (!fs.existsSync(ready)) {
   fs.writeFileSync(ready, 'ready');
   fs.appendFileSync(path.join(root, 'events'), (health ? 'backend-ready' : 'frontend-ready') + '\\n');
