@@ -1,0 +1,334 @@
+package com.blufftable.game;
+
+import com.blufftable.domain.GameType;
+import com.blufftable.domain.RoomMembership;
+import com.blufftable.service.RewardService;
+import java.security.SecureRandom;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.stereotype.Component;
+
+@Component
+public class LiarsDeckEngine implements GameEngine {
+    private static final long RISK_UNIT = 10L;
+    private final Map<UUID, State> games = new ConcurrentHashMap<>();
+    private final SecureRandom random = new SecureRandom();
+    private final RewardService rewards;
+
+    public LiarsDeckEngine(RewardService rewards) {
+        this.rewards = rewards;
+    }
+
+    @Override public GameType type() { return GameType.LIARS_DECK; }
+
+    @Override
+    public void start(UUID roomId, List<RoomMembership> members, GameStartSettings settings) {
+        if (members.size() < 2) throw new GameRuleException("At least two players are required");
+        int available = settings.deckCount() * 52;
+        int handSize = settings.cardsPerPlayer() == null ? available / members.size() : settings.cardsPerPlayer();
+        if (handSize < 1 || (long) handSize * members.size() > available) {
+            throw new GameRuleException("That hand size needs more cards than the selected decks provide");
+        }
+
+        List<Card> deck = buildDeck(settings.deckCount());
+        Collections.shuffle(deck, random);
+        List<UUID> order = new ArrayList<>(members.stream().map(m -> m.getPlayer().getId()).toList());
+        Map<UUID, List<Card>> hands = new LinkedHashMap<>();
+        order.forEach(id -> hands.put(id, new ArrayList<>()));
+        int cursor = 0;
+        for (int round = 0; round < handSize; round++) {
+            for (UUID playerId : order) hands.get(playerId).add(deck.get(cursor++));
+        }
+        hands.values().forEach(hand -> hand.sort(Comparator.comparingInt(c -> rankIndex(c.rank()))));
+
+        int first = random.nextInt(order.size());
+        State state = new State(UUID.randomUUID(), roomId, settings.deckCount(), handSize, order, hands, first);
+        state.event("New game · " + settings.deckCount() + (settings.deckCount() == 1 ? " deck" : " decks")
+                + " · " + handSize + " cards each");
+        games.put(roomId, state);
+    }
+
+    @Override
+    public void command(UUID playerId, GameCommand command) {
+        State state = games.get(command.roomId());
+        if (state == null) throw new GameRuleException("No active game in this room");
+        synchronized (state) {
+            requireActiveTurn(state, playerId);
+            switch (command.action()) {
+                case PLAY -> play(state, playerId, command.cardIds(), command.declaredRank());
+                case FOLD -> fold(state, playerId);
+                case CHALLENGE -> challenge(state, playerId);
+            }
+        }
+    }
+
+    private void play(State state, UUID playerId, List<UUID> cardIds, String declaredRank) {
+        if (cardIds.isEmpty()) throw new GameRuleException("Select at least one card");
+        if (new HashSet<>(cardIds).size() != cardIds.size()) throw new GameRuleException("A card can only be played once");
+        List<Card> hand = state.hands.get(playerId);
+        List<Card> played = cardIds.stream().map(id -> hand.stream()
+                        .filter(card -> card.id().equals(id)).findFirst()
+                        .orElseThrow(() -> new GameRuleException("One of those cards is not in your hand")))
+                .toList();
+
+        if (state.targetRank == null) {
+            String normalized = normalizeRank(declaredRank);
+            state.targetRank = normalized;
+            state.initializerIndex = state.currentIndex;
+        } else if (declaredRank != null && !declaredRank.isBlank()
+                && !state.targetRank.equalsIgnoreCase(declaredRank.trim())) {
+            throw new GameRuleException("This pool is already declared as " + state.targetRank + "s");
+        }
+
+        // Only the latest play can be checked. Replacing it secures that play now,
+        // even if the replacement is later caught. A fold alone does not secure it.
+        UUID previousPlayer = state.pendingClaim == null ? null : state.pendingClaim.playerId;
+        securePending(state, "PLAY_PASSED");
+        if (previousPlayer != null && finishIfEmpty(state, previousPlayer)) return;
+        hand.removeAll(played);
+        int generation = state.claims.size() + 1;
+        long risk = Math.multiplyExact(RISK_UNIT, Math.multiplyExact((long) generation, played.size()));
+        state.pendingClaim = new Claim(playerId, played, generation, risk);
+        state.claims.add(state.pendingClaim);
+        state.plays.add(new GameView.PlayView(++state.playSequence, playerId, state.targetRank, played.size(), "PENDING", null, List.of()));
+        if (state.plays.size() > 50) state.plays.removeFirst();
+        state.pool.addAll(played);
+        state.consecutiveFolds = 0;
+        state.event("A player claimed " + played.size() + " × " + state.targetRank + " · risk " + risk);
+
+        state.currentIndex = next(state, state.currentIndex);
+    }
+
+    private void fold(State state, UUID playerId) {
+        if (state.pool.isEmpty()) throw new GameRuleException("The pool initializer must play at least one card");
+        state.consecutiveFolds++;
+        state.event("A player folded");
+        if (state.pendingClaim != null && state.hands.get(state.pendingClaim.playerId).isEmpty()
+                && state.consecutiveFolds >= state.order.size() - 1) {
+            UUID candidate = state.pendingClaim.playerId;
+            securePending(state, "POOL_PASSED");
+            finishIfEmpty(state, candidate);
+            clearPool(state);
+            state.plays.clear();
+            return;
+        }
+        if (state.consecutiveFolds >= state.order.size()) {
+            securePending(state, "POOL_PASSED");
+            state.event("Everyone folded · pool vanished · final pending play paid");
+            clearPool(state);
+            state.plays.clear();
+            state.initializerIndex = state.currentIndex;
+        } else {
+            state.currentIndex = next(state, state.currentIndex);
+        }
+    }
+
+    private void challenge(State state, UUID challengerId) {
+        if (state.claims.isEmpty()) throw new GameRuleException("There is no claim to challenge");
+        Claim challenged = state.claims.getLast();
+        if (challenged.playerId.equals(challengerId)) throw new GameRuleException("You cannot challenge your own claim");
+        boolean truthful = challenged.cards.stream().allMatch(card -> card.rank().equals(state.targetRank));
+        UUID recipient;
+        UUID nextInitializer;
+        if (truthful) {
+            recipient = challengerId;
+            nextInitializer = challenged.playerId;
+            pay(state, challenged.playerId, challenged.risk * 2);
+            state.event("Truth! Challenger takes " + state.pool.size() + " cards · defender earned "
+                    + (challenged.risk * 2));
+        } else {
+            recipient = challenged.playerId;
+            nextInitializer = challengerId;
+            pay(state, challengerId, challenged.risk * 2);
+            state.event("Lie caught! Bluffer takes " + state.pool.size() + " cards · challenger earned "
+                    + (challenged.risk * 2));
+        }
+        state.outcome(truthful ? "CHECK_FAILED" : "CHECK_SUCCEEDED", challenged.playerId,
+                challengerId, truthful ? challenged.playerId : challengerId, challenged.risk * 2, challenged.cards);
+        resolvePlay(state, truthful ? "TRUTH" : "LIE", challengerId, challenged.cards);
+        state.hands.get(recipient).addAll(state.pool);
+        state.hands.get(recipient).sort(Comparator.comparingInt(c -> rankIndex(c.rank())));
+        clearPool(state);
+        state.currentIndex = state.order.indexOf(nextInitializer);
+        state.initializerIndex = state.currentIndex;
+        if (truthful) finishIfEmpty(state, challenged.playerId);
+    }
+
+    private boolean finishIfEmpty(State state, UUID playerId) {
+        if (!state.hands.get(playerId).isEmpty()) return false;
+        state.winnerId = playerId;
+        state.phase = "FINISHED";
+        long bonus = 100L + state.deckCount * 25L;
+        pay(state, playerId, bonus);
+        state.outcome("GAME_WON", playerId, null, playerId, bonus, List.of());
+        state.event("Final play accepted · winner bonus " + bonus);
+        return true;
+    }
+
+    private void resolvePlay(State state, String status, UUID challengerId, List<Card> revealed) {
+        if (state.plays.isEmpty()) return;
+        var play = state.plays.getLast();
+        state.plays.set(state.plays.size() - 1, new GameView.PlayView(play.id(), play.playerId(),
+                play.declaredRank(), play.cardCount(), status, challengerId, List.copyOf(revealed)));
+    }
+
+    private void clearPool(State state) {
+        state.pool.clear();
+        state.claims.clear();
+        state.targetRank = null;
+        state.consecutiveFolds = 0;
+        state.pendingClaim = null;
+    }
+
+    private void pay(State state, UUID playerId, long amount) {
+        rewards.credit(state.roomId, playerId, amount);
+        state.earnings.merge(playerId, amount, Long::sum);
+    }
+
+    private void securePending(State state, String reason) {
+        Claim pending = state.pendingClaim;
+        if (pending == null) return;
+        resolvePlay(state, "PASSED", null, List.of());
+        pay(state, pending.playerId, pending.risk);
+        state.outcome(reason, pending.playerId, null, pending.playerId, pending.risk, List.of());
+        state.event("Play passed · " + pending.risk + " coins secured");
+        state.pendingClaim = null;
+    }
+
+    @Override
+    public Optional<GameView> view(UUID roomId, UUID viewerId) {
+        State state = games.get(roomId);
+        if (state == null) return Optional.empty();
+        synchronized (state) {
+            Claim claim = state.claims.isEmpty() ? null : state.claims.getLast();
+            GameView.ClaimView claimView = claim == null ? null
+                    : new GameView.ClaimView(claim.playerId, claim.cards.size(), claim.generation, claim.risk);
+            List<GameView.HandCount> counts = state.order.stream()
+                    .map(id -> new GameView.HandCount(id, state.hands.get(id).size())).toList();
+            return Optional.of(new GameView(state.gameId, state.phase, state.deckCount, state.cardsPerPlayer,
+                    state.order.isEmpty() ? null : state.order.get(state.currentIndex),
+                    state.order.isEmpty() ? null : state.order.get(state.initializerIndex), state.targetRank,
+                    state.pool.size(), state.claims.size() + 1, state.consecutiveFolds, claimView,
+                    List.copyOf(state.hands.getOrDefault(viewerId, List.of())), counts,
+                    List.copyOf(state.events), state.winnerId, state.participants,
+                    state.pendingClaim == null ? null : new GameView.ClaimView(state.pendingClaim.playerId,
+                            state.pendingClaim.cards.size(), state.pendingClaim.generation, state.pendingClaim.risk),
+                    state.participants.stream().map(id -> new GameView.Earnings(id, state.earnings.getOrDefault(id, 0L))).toList(),
+                    state.outcomes.stream().map(outcome -> outcome.forViewer(viewerId)).toList(),
+                    state.plays.stream().map(play -> play.forViewer(viewerId)).toList()));
+        }
+    }
+
+    @Override public void remove(UUID roomId) { games.remove(roomId); }
+
+    @Override
+    public void depart(UUID roomId, UUID playerId) {
+        State state = games.get(roomId);
+        if (state == null) return;
+        synchronized (state) {
+            if (!"ACTIVE".equals(state.phase) || !state.order.contains(playerId)) return;
+            UUID nextPlayer = state.order.get(state.currentIndex);
+            if (nextPlayer.equals(playerId)) nextPlayer = state.order.get(next(state, state.currentIndex));
+            state.order.remove(playerId);
+            state.hands.remove(playerId);
+            // A departed player cannot receive or defend an unresolved claim. Discard, never pay it.
+            if (state.pendingClaim != null) {
+                resolvePlay(state, "VOIDED", null, List.of());
+                // Restore an unverified final hand so a remaining player can continue.
+                var pendingHand = state.hands.get(state.pendingClaim.playerId);
+                if (pendingHand != null && pendingHand.isEmpty()) pendingHand.addAll(state.pendingClaim.cards);
+                state.outcome("PLAY_VOIDED", state.pendingClaim.playerId, null, null, 0, List.of());
+            }
+            clearPool(state);
+            state.currentIndex = Math.max(0, state.order.indexOf(nextPlayer));
+            state.initializerIndex = state.currentIndex;
+            state.event("Player left the deal · unresolved pool discarded without payout");
+            if (state.order.size() <= 1) {
+                state.phase = "FINISHED";
+                state.event("Deal ended · fewer than two players remain · no winner bonus");
+            }
+        }
+    }
+
+    private void requireActiveTurn(State state, UUID playerId) {
+        if (!"ACTIVE".equals(state.phase)) throw new GameRuleException("This game has finished");
+        if (!state.order.get(state.currentIndex).equals(playerId)) throw new GameRuleException("It is not your turn");
+    }
+
+    private static int next(State state, int index) { return (index + 1) % state.order.size(); }
+
+    private static String normalizeRank(String rank) {
+        if (rank == null) throw new GameRuleException("Choose a rank for the new pool");
+        String normalized = rank.trim().toUpperCase(Locale.ROOT);
+        if (Arrays.stream(Card.RANKS).noneMatch(normalized::equals)) {
+            throw new GameRuleException("Unknown card rank");
+        }
+        return normalized;
+    }
+
+    private static int rankIndex(String rank) {
+        for (int i = 0; i < Card.RANKS.length; i++) if (Card.RANKS[i].equals(rank)) return i;
+        return Integer.MAX_VALUE;
+    }
+
+    private static List<Card> buildDeck(int deckCount) {
+        List<Card> deck = new ArrayList<>(deckCount * 52);
+        for (int d = 0; d < deckCount; d++) {
+            for (String suit : Card.SUITS) for (String rank : Card.RANKS) {
+                deck.add(new Card(UUID.randomUUID(), rank, suit));
+            }
+        }
+        return deck;
+    }
+
+    private record Claim(UUID playerId, List<Card> cards, int generation, long risk) {}
+
+    private static final class State {
+        final UUID gameId;
+        final UUID roomId;
+        final int deckCount;
+        final int cardsPerPlayer;
+        final List<UUID> order;
+        final List<UUID> participants;
+        final Map<UUID, List<Card>> hands;
+        final List<Card> pool = new ArrayList<>();
+        final List<Claim> claims = new ArrayList<>();
+        final Deque<String> events = new ArrayDeque<>();
+        final Map<UUID, Long> earnings = new HashMap<>();
+        final Deque<GameView.Outcome> outcomes = new ArrayDeque<>();
+        final List<GameView.PlayView> plays = new ArrayList<>();
+        long playSequence;
+        long outcomeSequence;
+        Claim pendingClaim;
+        int currentIndex;
+        int initializerIndex;
+        int consecutiveFolds;
+        String targetRank;
+        String phase = "ACTIVE";
+        UUID winnerId;
+
+        State(UUID gameId, UUID roomId, int deckCount, int cardsPerPlayer, List<UUID> order,
+              Map<UUID, List<Card>> hands, int first) {
+            this.gameId = gameId;
+            this.roomId = roomId;
+            this.deckCount = deckCount;
+            this.cardsPerPlayer = cardsPerPlayer;
+            this.order = order;
+            this.participants = List.copyOf(order);
+            this.hands = hands;
+            this.currentIndex = first;
+            this.initializerIndex = first;
+        }
+
+        void event(String value) {
+            events.addFirst(value);
+            while (events.size() > 8) events.removeLast();
+        }
+
+        void outcome(String type, UUID playerId, UUID challengerId, UUID rewardPlayerId, long amount, List<Card> cards) {
+            outcomes.addLast(new GameView.Outcome(++outcomeSequence, type, playerId, challengerId,
+                    rewardPlayerId, amount, pool.size(), targetRank, List.copyOf(cards)));
+            while (outcomes.size() > 32) outcomes.removeFirst();
+        }
+    }
+}

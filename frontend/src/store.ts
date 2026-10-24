@@ -1,0 +1,372 @@
+import { create } from 'zustand'
+import type { Player, RoomSummary, RoomView, SkinId } from './types'
+
+type GameAction = 'PLAY' | 'FOLD' | 'CHALLENGE'
+
+interface Store {
+  player: Player | null
+  bootstrapping: boolean
+  rooms: RoomSummary[]
+  room: RoomView | null
+  loading: boolean
+  connected: boolean
+  error: string | null
+  socket: WebSocket | null
+  reconnect: () => void
+  identify: (displayName: string) => Promise<void>
+  renamePlayer: (displayName: string) => Promise<void>
+  loadRooms: () => Promise<void>
+  createRoom: (name: string) => Promise<void>
+  joinRoom: (roomId: string) => Promise<void>
+  deleteRoom: (roomId: string) => Promise<void>
+  kickPlayer: (roomId: string, playerId: string) => Promise<void>
+  openRoom: (roomId: string) => Promise<void>
+  leaveRoom: () => void
+  startGame: (deckCount: number, cardsPerPlayer: number | null) => Promise<void>
+  changeSkin: (skinId: SkinId, purchase: boolean) => Promise<void>
+  stopGame: (gameId: string | null) => Promise<boolean>
+  command: (action: GameAction, cardIds?: string[], declaredRank?: string) => void
+  clearError: () => void
+}
+
+const PLAYER_KEY = 'bluff-table-player'
+const DEVICE_TOKEN_KEY = 'bluff-table-device-token'
+const saved = localStorage.getItem(PLAYER_KEY)
+const initialPlayer = saved ? safePlayer(saved) : null
+const deviceToken = getOrCreateDeviceToken()
+let navigation = 0
+let reconnectTimer: number | undefined
+let connectionTimer: number | undefined
+let reconnectAttempts = 0
+
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 12000)
+  try {
+    const response = await fetch(path, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${deviceToken}`,
+        ...options?.headers,
+      },
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body?.message ?? `Server request failed (${response.status}). Please try again.`)
+    }
+    return response.status === 204 ? (undefined as T) : await response.json()
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('The server took too long to respond. Please try again.')
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
+function socketUrl() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${location.host}/ws`
+}
+
+function isLoopbackBrowser() {
+  return location.hostname === '127.0.0.1' || location.hostname === 'localhost' || location.hostname === '[::1]'
+}
+
+function identityEndpoint() {
+  return isLoopbackBrowser() ? `${import.meta.env.VITE_LOCAL_API_URL || 'http://127.0.0.1:8080'}/api/players` : '/api/players'
+}
+
+function restoreIdentity(displayName: string, legacyPlayerId?: string) {
+  return api<Player>(identityEndpoint(), {
+    method: 'POST',
+    body: JSON.stringify({ legacyPlayerId, displayName, deviceToken }),
+    headers: isLoopbackBrowser() ? { 'X-Bluff-Root-Claim': 'local-server-runner' } : undefined,
+  })
+}
+
+export const useGameStore = create<Store>((set, get) => ({
+  player: initialPlayer,
+  bootstrapping: initialPlayer !== null,
+  rooms: [],
+  room: null,
+  loading: false,
+  connected: false,
+  error: null,
+  socket: null,
+  reconnect: () => { if (get().player && !get().bootstrapping && !get().connected) connect(set, get) },
+
+  identify: async (displayName) => {
+    set({ loading: true, error: null })
+    try {
+      const player = await restoreIdentity(displayName, get().player?.id)
+      localStorage.setItem(PLAYER_KEY, JSON.stringify(player))
+      set({ player, loading: false, bootstrapping: false })
+      connect(set, get)
+      await get().loadRooms()
+    } catch (error) { set({ player: null, error: message(error), loading: false, bootstrapping: false }) }
+  },
+
+  renamePlayer: async (displayName) => {
+    if (!get().player) return
+    set({ loading: true, error: null })
+    try {
+      const player = await api<Player>('/api/players/me', {
+        method: 'PATCH', body: JSON.stringify({ displayName }),
+      })
+      localStorage.setItem(PLAYER_KEY, JSON.stringify(player))
+      set({ player, loading: false })
+    } catch (error) { set({ error: message(error), loading: false }) }
+  },
+
+  loadRooms: async () => {
+    const player = get().player
+    if (!player) return
+    try {
+      const rooms = await api<RoomSummary[]>('/api/rooms')
+      set({ rooms })
+    } catch (error) { set({ error: message(error) }) }
+  },
+
+  createRoom: async (name) => {
+    const player = get().player
+    if (!player || get().loading) return
+    const request = ++navigation
+    set({ loading: true, error: null })
+    try {
+      const room = await api<RoomView>('/api/rooms', {
+        method: 'POST', body: JSON.stringify({ name, gameType: 'LIARS_DECK' }),
+      })
+      if (request !== navigation) return
+      set({ room, loading: false })
+      if (get().connected) sendIfOpen(get().socket, { type: 'SYNC_ROOM', payload: { roomId: room.id } })
+      await get().loadRooms()
+    } catch (error) { if (request === navigation) set({ error: message(error), loading: false }) }
+  },
+
+  joinRoom: async (roomId) => {
+    const player = get().player
+    if (!player || get().loading) return
+    const request = ++navigation
+    set({ loading: true, error: null })
+    try {
+      const room = await api<RoomView>(`/api/rooms/${roomId}/join`, {
+        method: 'POST',
+      })
+      if (request !== navigation) return
+      set({ room, loading: false })
+      if (get().connected) sendIfOpen(get().socket, { type: 'SYNC_ROOM', payload: { roomId } })
+      await get().loadRooms()
+    } catch (error) { if (request === navigation) set({ error: message(error), loading: false }) }
+  },
+
+  deleteRoom: async (roomId) => {
+    const player = get().player
+    if (!player) return
+    try {
+      await api<void>(`/api/rooms/${roomId}`, { method: 'DELETE' })
+      if (get().room?.id === roomId) set({ room: null })
+      await get().loadRooms()
+    } catch (error) { set({ error: message(error) }) }
+  },
+
+  kickPlayer: async (roomId, playerId) => {
+    try {
+      await api<void>(`/api/rooms/${roomId}/players/${playerId}`, { method: 'DELETE' })
+    } catch (error) { set({ error: message(error) }) }
+  },
+
+  openRoom: async (roomId) => {
+    const player = get().player
+    if (!player || get().loading) return
+    const request = ++navigation
+    set({ loading: true, error: null })
+    try {
+      const room = await api<RoomView>(`/api/rooms/${roomId}/snapshot`)
+      if (request !== navigation) return
+      set({ room, loading: false })
+      if (get().connected) sendIfOpen(get().socket, { type: 'SYNC_ROOM', payload: { roomId } })
+    } catch (error) { if (request === navigation) set({ error: message(error), loading: false }) }
+  },
+
+  leaveRoom: () => {
+    ++navigation
+    if (get().connected) sendIfOpen(get().socket, { type: 'LEAVE_ROOM', payload: {} })
+    set({ room: null, loading: false })
+    void get().loadRooms()
+  },
+
+  startGame: async (deckCount, cardsPerPlayer) => {
+    const { player, room } = get()
+    if (!player || !room) return
+    set({ loading: true, error: null })
+    try {
+      await api<RoomView>(`/api/rooms/${room.id}/start`, {
+        method: 'POST', body: JSON.stringify({ deckCount, cardsPerPlayer }),
+      })
+      set({ loading: false })
+    } catch (error) { set({ error: message(error), loading: false }) }
+  },
+
+  stopGame: async (gameId) => {
+    const room = get().room
+    if (!room) return false
+    set({ loading: true, error: null })
+    try {
+      await api<RoomView>(`/api/rooms/${room.id}/stop`, { method: 'POST', body: JSON.stringify({ gameId }) })
+      set({ loading: false })
+      return true
+    } catch (error) { set({ loading: false, error: message(error) }); return false }
+  },
+
+  changeSkin: async (skinId, purchase) => {
+    const room = get().room
+    if (!room) return
+    set({ loading: true, error: null })
+    try {
+      await api<RoomView>(`/api/rooms/${room.id}/skins/${purchase ? 'purchase' : 'equip'}`, {
+        method: purchase ? 'POST' : 'PUT', body: JSON.stringify({ skinId }),
+      })
+      set({ loading: false })
+    } catch (error) { set({ error: message(error), loading: false }) }
+  },
+
+  command: (action, cardIds = [], declaredRank) => {
+    const { socket, room, connected } = get()
+    if (!connected || !room || !socket || socket.readyState !== WebSocket.OPEN) {
+      set({ error: 'Live connection is not ready yet' })
+      return
+    }
+    socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: { roomId: room.id, action, cardIds, declaredRank } }))
+  },
+
+  clearError: () => set({ error: null }),
+}))
+
+function connect(set: (partial: Partial<Store>) => void, get: () => Store) {
+  window.clearTimeout(reconnectTimer)
+  window.clearTimeout(connectionTimer)
+  const previous = get().socket
+  if (previous) retireSocket(previous)
+  set({ connected: false, socket: null })
+  let socket: WebSocket
+  try {
+    socket = new WebSocket(socketUrl())
+  } catch {
+    scheduleReconnect(set, get, null)
+    return
+  }
+  set({ socket })
+  let retired = false
+  let authenticated = false
+  let authSent = false
+  const disconnect = (restoreDevice = false) => {
+    if (retired || get().socket !== socket) return
+    retired = true
+    window.clearTimeout(connectionTimer)
+    retireSocket(socket)
+    set({ connected: false })
+    if (get().room?.game?.phase === 'ACTIVE') {
+      ++navigation
+      set({ room: null, loading: false, error: 'Disconnected. You have left this deal; your room balance is safe.' })
+    }
+    if (restoreDevice && get().player) {
+      const profile = get().player!
+      void restoreIdentity(profile.displayName, profile.id).then(player => {
+        if (get().socket !== socket) return
+        localStorage.setItem(PLAYER_KEY, JSON.stringify(player))
+        set({ player })
+      }).catch(error => {
+        if (get().socket === socket) set({ error: message(error) })
+      }).finally(() => scheduleReconnect(set, get, socket))
+    } else scheduleReconnect(set, get, socket)
+  }
+  const authenticate = () => {
+    if (retired || get().socket !== socket || authSent) return
+    try {
+      socket.send(JSON.stringify({ type: 'AUTH', payload: { deviceToken } }))
+      authSent = true
+    } catch { disconnect() }
+  }
+  // Covers stalled handshakes AND open sockets that never finish authentication.
+  connectionTimer = window.setTimeout(() => disconnect(), 12000)
+  socket.onopen = authenticate
+  socket.onerror = () => disconnect()
+  socket.onclose = event => disconnect(!authenticated && event?.code === 1008)
+  socket.onmessage = (event) => {
+    if (retired || get().socket !== socket) return
+    let message
+    try { message = JSON.parse(event.data) } catch { disconnect(); return }
+    if (!message || typeof message !== 'object') { disconnect(); return }
+    if (message.type === 'AUTH_REQUIRED' && !authenticated) authenticate()
+    if (message.type === 'CONNECTED') {
+      if (message.payload?.playerId !== get().player?.id) { disconnect(true); return }
+      authenticated = true
+      reconnectAttempts = 0
+      window.clearTimeout(connectionTimer)
+      set({ connected: true })
+      const room = get().room
+      if (room) socket.send(JSON.stringify({ type: 'SYNC_ROOM', payload: { roomId: room.id } }))
+    }
+    if (message.type === 'ROOM_STATE' && get().room?.id === message.payload.id) {
+      setRoomIfChanged(set, get, message.payload)
+    }
+    if (['KICKED', 'ROOM_DELETED', 'ROOM_REJECTED'].includes(message.type) && get().room?.id === message.payload.roomId) {
+      ++navigation
+      set({ room: null, loading: false, error: message.type === 'ROOM_REJECTED' ? message.payload.message : message.type === 'KICKED' ? 'You were removed from the table' : 'This table was deleted' })
+      void get().loadRooms()
+    }
+    if (message.type === 'ERROR') {
+      if (!authenticated) disconnect(true)
+      else set({ error: message.payload.message })
+    }
+  }
+}
+
+function scheduleReconnect(set: (partial: Partial<Store>) => void, get: () => Store, socket: WebSocket | null) {
+  if (!get().player || get().socket !== socket) return
+  window.clearTimeout(reconnectTimer)
+  const delay = Math.min(1600 * 2 ** Math.min(reconnectAttempts++, 3), 10000)
+  reconnectTimer = window.setTimeout(() => {
+    if (get().player && get().socket === socket) connect(set, get)
+  }, delay)
+}
+
+function retireSocket(socket: WebSocket) {
+  socket.onopen = null
+  socket.onmessage = null
+  socket.onerror = null
+  socket.onclose = null
+  socket.close()
+}
+
+function message(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong' }
+
+function setRoomIfChanged(set: (partial: Partial<Store>) => void, get: () => Store, room: RoomView) {
+  if (get().room?.id === room.id && JSON.stringify(get().room) !== JSON.stringify(room)) set({ room })
+}
+
+function sendIfOpen(socket: WebSocket | null, message: object) {
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
+}
+
+function safePlayer(value: string): Player | null {
+  try {
+    const player = JSON.parse(value) as Player
+    return player?.id && player?.displayName ? player : null
+  } catch { return null }
+}
+
+function getOrCreateDeviceToken() {
+  const existing = localStorage.getItem(DEVICE_TOKEN_KEY)
+  if (existing && existing.length >= 32) return existing
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  const token = btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
+  localStorage.setItem(DEVICE_TOKEN_KEY, token)
+  return token
+}
+
+if (initialPlayer) queueMicrotask(() => {
+  void useGameStore.getState().identify(initialPlayer.displayName)
+})

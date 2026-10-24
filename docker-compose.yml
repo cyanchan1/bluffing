@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: blufftable
+      POSTGRES_USER: blufftable
+      POSTGRES_PASSWORD: blufftable
+    ports:
+      - "5432:5432"
+    volumes:
+      - blufftable-data:/var/lib/postgresql/data
+
+volumes:
+  blufftable-data:
+
