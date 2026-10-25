@@ -102,7 +102,8 @@ class RoomLifecycleTest {
 
         // Custom hand capacity, too, is calculated against the two present players, not four seats.
         var next = service.start(table, host, new StartGameRequest(1, 20));
-        assertThat(next.game().hands()).allMatch(count -> count.cardCount() == 20);
+        int expectedHandSize = 20 + (type == GameType.LIARS_DECK_4_FUN ? 1 : 0);
+        assertThat(next.game().hands()).allMatch(count -> count.cardCount() == expectedHandSize);
         long before = memberships.findByRoomIdAndPlayerId(table, host).orElseThrow().getBalance();
         rewards.credit(table, host, 100);
         service.stop(table, host, new StopGameRequest(next.game().gameId()));

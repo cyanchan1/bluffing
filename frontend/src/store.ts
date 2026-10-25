@@ -1,7 +1,7 @@
 import { create } from 'zustand'
-import type { GameType, Player, RoomSummary, RoomView, SkinId } from './types'
+import type { AvatarId, GameType, Player, RoomSummary, RoomView, SkinId } from './types'
 
-type GameAction = 'PLAY' | 'FOLD' | 'CHALLENGE'
+type GameAction = 'PLAY' | 'FOLD' | 'CHALLENGE' | 'SPELL_ANSWER' | 'SPELL_DRAFT'
 
 interface Store {
   player: Player | null
@@ -23,9 +23,10 @@ interface Store {
   openRoom: (roomId: string) => Promise<void>
   leaveRoom: () => void
   startGame: (deckCount: number, cardsPerPlayer: number | null, randomDeckCount?: boolean) => Promise<void>
+  changeAvatar: (avatarId: AvatarId, purchase?: boolean) => Promise<void>
   changeSkin: (skinId: SkinId, purchase: boolean) => Promise<void>
   stopGame: (gameId: string | null) => Promise<boolean>
-  command: (action: GameAction, cardIds?: string[], declaredRank?: string) => void
+  command: (action: GameAction, cardIds?: string[], declaredRank?: string, spellingId?: string, answer?: string) => void
   clearError: () => void
 }
 
@@ -232,13 +233,25 @@ export const useGameStore = create<Store>((set, get) => ({
     } catch (error) { set({ error: message(error), loading: false }) }
   },
 
-  command: (action, cardIds = [], declaredRank) => {
+  changeAvatar: async (avatarId, purchase = false) => {
+    const room = get().room
+    if (!room) return
+    set({ loading: true, error: null })
+    try {
+      await api<RoomView>(`/api/rooms/${room.id}/avatars/${purchase ? 'purchase' : 'equip'}`, {
+        method: purchase ? 'POST' : 'PUT', body: JSON.stringify({ avatarId }),
+      })
+      set({ loading: false })
+    } catch (error) { set({ error: message(error), loading: false }) }
+  },
+
+  command: (action, cardIds = [], declaredRank, spellingId, answer) => {
     const { socket, room, connected } = get()
     if (!connected || !room || !socket || socket.readyState !== WebSocket.OPEN) {
       set({ error: 'Live connection is not ready yet' })
       return
     }
-    socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: { roomId: room.id, action, cardIds, declaredRank } }))
+    socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: { roomId: room.id, action, cardIds, declaredRank, spellingId, answer } }))
   },
 
   clearError: () => set({ error: null }),
