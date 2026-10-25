@@ -129,18 +129,15 @@ public class RoomService {
     }
 
     @Transactional
-    public java.util.List<UUID> advanceTimedGames() {
-        java.util.List<UUID> changed = new java.util.ArrayList<>();
-        for (GameEngine engine : engines.all()) {
-            for (UUID id : engine.dueRooms()) {
-                Room room = lockRoom(id);
-                if (room.getGameType() == engine.type() && engine.tick(id)) {
-                    updateFinishedStatus(room, room.getHost().getId());
-                    changed.add(id);
-                }
-            }
-        }
-        return changed;
+    public boolean advanceTimedGame(UUID roomId) {
+        // Each room settles in its own transaction. A deleted room or a failure in
+        // another table must not roll back rewards from an already settled timer.
+        Room room = rooms.findWithLockById(roomId).orElse(null);
+        if (room == null || room.getStatus() != RoomStatus.IN_GAME) return false;
+        GameEngine engine = engines.require(room.getGameType());
+        if (!engine.tick(roomId)) return false;
+        updateFinishedStatus(room, room.getHost().getId());
+        return true;
     }
 
     @Transactional

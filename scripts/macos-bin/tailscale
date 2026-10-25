@@ -6,5 +6,12 @@ for app_binary in "/Applications/Tailscale.app/Contents/MacOS/Tailscale" \
     exec "$app_binary" "$@"
   fi
 done
+shim_dir="$(cd "$(dirname "$0")" && pwd)"
+IFS=: read -r -a search_dirs <<< "$PATH"
+for search_dir in "${search_dirs[@]}"; do
+  if [[ "$search_dir" != "$shim_dir" && -x "$search_dir/tailscale" && ! "$search_dir/tailscale" -ef "$0" ]]; then
+    exec "$search_dir/tailscale" "$@"
+  fi
+done
 echo "Tailscale.app was not found in /Applications or ~/Applications." >&2
 exit 127

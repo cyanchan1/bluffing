@@ -280,8 +280,6 @@ function GameTable() {
             </div>
             <TableSeats room={room} playerId={player.id} />
           </div>
-          {room.gameType === 'LIARS_DECK_PLUS' && <div className="battle-rules"><PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} /></div>}
-          {room.gameType === 'LIARS_DECK_4_FUN' && <p className="battle-rules-note">SPELL card · a successful truth check starts a timed spelling challenge; missed words draw cards.</p>}
           {!participating && <div className="my-seat">{player.root ? 'ROOT' : 'HOST'} · SPECTATING</div>}
           {participating && <section className="hand-area">
             {game.pendingClaim && game.hands.some(hand => hand.playerId === game.pendingClaim?.playerId && hand.cardCount === 0) && <p className="final-play-notice" role="status">Final hand pending: Truth Check to challenge, or play / fold to accept. Victory is not confirmed yet.</p>}
@@ -297,14 +295,16 @@ function GameTable() {
             <div ref={handScroll} className="cards" aria-label="Your hand"><div className="cards-track">{game.hand.map((card, index) => <PlayingCard key={card.id} card={card} index={index}
               selected={selected.includes(card.id)} disabled={!myTurn} onClick={() => setSelected(items => items.includes(card.id) ? items.filter(id => id !== card.id) : [...items, card.id])} />)}</div></div>
           </section>}
+          {room.gameType === 'LIARS_DECK_PLUS' && <div className="battle-rules"><PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} /></div>}
+          {room.gameType === 'LIARS_DECK_4_FUN' && <p className="battle-rules-note">A lone SPELL card triggers a 15-second spelling challenge when checked. Missed words draw cards.</p>}
           <aside className="battle-reward-board" aria-label="Reward and wallet">
             <div className="reward-board-heading"><strong>{gameModes[room.gameType].name}</strong><span>{game.deckCount} {game.deckCount === 1 ? 'deck' : 'decks'}</span></div>
             <Wallets room={room} playerId={player.id} />
             <motion.div className="risk-box" aria-label={`Potential reward: generation ${rewardGeneration} times ${rewardCards} cards, ${rewardValue} coins`} animate={{ scale: selected.length ? [1, 1.025, 1] : 1 }} transition={{ duration: .24 }}>
               <div className="risk-formula" aria-label={`${rewardGeneration} times ${rewardCards}`}>
-                <div className="risk-factor generation" aria-label="Generation"><strong>{rewardGeneration}</strong><em>N · GEN</em></div>
+                <div className="risk-factor generation" aria-label="Generation"><strong>{rewardGeneration}</strong></div>
                 <b className="risk-operator">×</b>
-                <div className="risk-factor cards-factor" aria-label="Cards"><strong>{rewardCards}</strong><em>M · CARDS</em></div>
+                <div className="risk-factor cards-factor" aria-label="Cards"><strong>{rewardCards}</strong></div>
               </div>
               <div className="risk-payout"><span>× 10</span><strong>{rewardValue}</strong><b>◆</b></div>
             </motion.div>
@@ -322,7 +322,7 @@ function PlayingCard({ card, selected, disabled, onClick, index }: { card: Card;
   const suit = spell ? '✦' : suitSymbols[card.suit]
   return <motion.button layout aria-label={spell ? 'Spell card' : joker ? 'Joker (wild card)' : `${card.rank} of ${card.suit.toLowerCase()}`} aria-pressed={selected} className={`playing-card ${spell ? 'spell-card' : ''} ${joker ? 'joker-card' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''}`} disabled={disabled} onClick={onClick}
     initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: selected ? -22 : 0 }} transition={{ delay: Math.min(index * .025, .35) }}>
-    <span>{spell ? 'SPELL' : card.rank}<small>{suit}</small></span><b>{suit}</b>{spell && <em className="spell-card-label">10 SECOND<br />SPELLING TRAP</em>}<span className="bottom">{spell ? 'SPELL' : card.rank}<small>{suit}</small></span>
+    <span>{spell ? 'SPELL' : card.rank}<small>{suit}</small></span><b>{suit}</b>{spell && <em className="spell-card-label">15 SECOND<br />SPELLING TRAP</em>}<span className="bottom">{spell ? 'SPELL' : card.rank}<small>{suit}</small></span>
   </motion.button>
 }
 

@@ -96,7 +96,7 @@ It can also expose the app privately through Tailscale Serve:
 bash scripts/start-local-macos.sh --tailnet
 ```
 
-Stop the app with Ctrl+C or `bash scripts/stop-local.sh`. PostgreSQL data remains in `.local/postgres`; `bash scripts/stop-local-db.sh` stops that database without deleting it. The launcher expects Homebrew's `openjdk@21`, `node@24`, `postgresql@16`, and `coreutils` packages.
+Stop the app with Ctrl+C or `bash scripts/stop-local.sh`. PostgreSQL data remains in `.local/postgres`; `bash scripts/stop-local-db.sh` stops that database without deleting it. The launcher expects Homebrew's `bash`, `python`, `openjdk@21`, `node@24`, `postgresql@16`, and `coreutils` packages.
 
 ### Windows
 

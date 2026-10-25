@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
+for argument in "$@"; do
+  case "$argument" in
+    --tailnet) ;;
+    --help|-h) echo 'Usage: bash scripts/start-local-macos.sh [--tailnet]'; exit 0 ;;
+    *) echo "Unknown argument: $argument" >&2; exit 2 ;;
+  esac
+done
 source "$project_root/scripts/local-env.sh"
+for required in python3 initdb pg_ctl psql createdb; do
+  command -v "$required" >/dev/null 2>&1 || { echo "Required command not found: $required" >&2; exit 1; }
+done
+[[ -x "$bluff_brew_prefix/bin/bash" ]] || { echo 'Install Homebrew Bash: brew install bash' >&2; exit 1; }
 export PATH="$project_root/scripts/macos-bin:$PATH"
 data_dir="$project_root/.local/postgres"
 mkdir -p "$project_root/.local"

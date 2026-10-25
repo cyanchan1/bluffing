@@ -27,7 +27,7 @@ function Challenge({ round, volume, onVolumeChange }: { round: SpellingView; vol
   const [answer, setAnswer] = useState('')
   const [sent, setSent] = useState(false)
   const [dismissed, setDismissed] = useState(false)
-  const [remaining, setRemaining] = useState(0)
+  const [remaining, setRemaining] = useState(() => Math.max(0, Math.ceil((round.deadline - round.serverNow) / 1000)))
   const playing = round.stage === 'ACTIVE'
   const finished = !playing
   useEffect(() => {

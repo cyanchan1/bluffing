@@ -311,11 +311,11 @@ class LiarsDeckEngineTest {
     }
 
     @Test
-    void truthfulFinalHandIncludingWildcardWinsOnlyAfterCheck() {
+    void truthfulFinalCardWinsOnlyAfterCheck() {
         engine.start(roomId, List.of(member(one), member(two)), new GameStartSettings(1, 1));
         UUID first = view(one).currentPlayerId();
         Card card = view(first).hand().getFirst();
-        engine.command(first, new GameCommand(roomId, GameAction.PLAY, view(first).hand().stream().map(Card::id).toList(), card.rank()));
+        playCard(first, card, card.rank());
         assertThat(view(first).phase()).isEqualTo("ACTIVE");
         engine.command(view(first).currentPlayerId(), new GameCommand(roomId, GameAction.CHALLENGE, List.of(), null));
         assertThat(view(first).winnerId()).isEqualTo(first);
