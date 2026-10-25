@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 const database = process.env.QA_DATABASE
 if (!database || !/^blufftable_.*qa$/.test(database)) throw new Error('Set QA_DATABASE to an explicit disposable blufftable_*qa database')
-const directory = new URL('../server/src/main/resources/db/migration/', import.meta.url)
+const directory = new URL('../../server/src/main/resources/db/migration/', import.meta.url)
 const read = file => readFileSync(new URL(file, directory),'utf8')
 const schema = `migration_qa_${Date.now()}`
 const sql = `BEGIN; CREATE SCHEMA ${schema}; SET LOCAL search_path TO ${schema};

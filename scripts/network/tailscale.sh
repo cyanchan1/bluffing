@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 
 check_only=false
 case "${1:-}" in
   --check) check_only=true ;;
   '') ;;
-  *) echo "Usage: bash scripts/tailscale-serve.sh [--check]" >&2; exit 2 ;;
+  --help|-h) echo 'Usage: bash scripts/network/tailscale.sh [--check]'; exit 0 ;;
+  *) echo "Usage: bash scripts/network/tailscale.sh [--check]" >&2; exit 2 ;;
 esac
 if (($# > 1)); then echo "Too many arguments." >&2; exit 2; fi
 
@@ -14,12 +16,7 @@ if ! command -v tailscale >/dev/null 2>&1; then
   exit 1
 fi
 
-for required_command in node curl timeout; do
-  if ! command -v "$required_command" >/dev/null 2>&1; then
-    echo "Required command not found: $required_command" >&2
-    exit 1
-  fi
-done
+require_commands node curl timeout
 
 if ! tailscale_state="$(timeout 10 tailscale status --json | node -e 'let text = ""; process.stdin.on("data", chunk => text += chunk); process.stdin.on("end", () => { try { console.log(JSON.parse(text).BackendState); } catch { process.exitCode = 1; } });')"; then
   echo "Cannot read Tailscale status. Check that tailscaled is running and this account can access it." >&2

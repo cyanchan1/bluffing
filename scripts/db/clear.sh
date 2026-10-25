@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 077
 
-project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 database="blufftable"
 db_user="blufftable"
 db_host="127.0.0.1"
@@ -16,7 +16,7 @@ dry_run=false
 
 usage() {
   cat <<'HELP'
-Usage: ./scripts/clear-database.sh (--container NAME | --local) [options]
+Usage: bash scripts/db/clear.sh (--container NAME | --local) [options]
 
 Clear Bluff Table application data, keeping its schema and Flyway history.
 Stop the backend first. A full database backup and typed confirmation are required.
@@ -71,7 +71,7 @@ fi
 echo "Clears: accounts, rooms, memberships, balances, win records, personal and legacy skins."
 echo "Keeps: schema, migrations, and a full backup. Backend port $backend_port must be stopped."
 if [[ "$dry_run" == true ]]; then echo "Dry run only. No connection or changes made."; exit 0; fi
-if (exec 3<>/dev/tcp/127.0.0.1/"$backend_port") 2>/dev/null; then
+if port_is_open "$backend_port"; then
   die "Port $backend_port is listening. Stop the backend before clearing its database"
 fi
 if [[ "$source_mode" == container ]]; then

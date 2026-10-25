@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 
-const script = new URL('../clear-database.sh', import.meta.url).pathname
+const script = new URL('../db/clear.sh', import.meta.url).pathname
 const run = (...args) => spawnSync('bash', [script, ...args], { encoding: 'utf8', timeout: 3000 })
 
 test('reset help and dry-run never connect or create a backup', () => {

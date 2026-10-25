@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 
-const script = new URL('../ci-integration.sh', import.meta.url).pathname
+const script = new URL('../ci/integration.sh', import.meta.url).pathname
 const run = (database, ...args) => spawnSync('bash', [script, ...args], {
   env: { ...process.env, QA_DATABASE: database }, encoding: 'utf8', timeout: 3000,
 })

@@ -18,9 +18,11 @@ async function fixture(t, overrides = {}, tailnet = false) {
   await mkdir(join(root, 'scripts'))
   await mkdir(join(root, 'frontend/node_modules/vite/bin'), { recursive: true })
   await cp(new URL('start-dev.sh', scripts), join(root, 'scripts/start-dev.sh'))
-  await cp(new URL('tailscale-serve.sh', scripts), join(root, 'scripts/tailscale-serve.sh'))
+  for (const directory of ['lib', 'dev', 'network']) {
+    await cp(new URL(directory, scripts), join(root, 'scripts', directory), { recursive: true })
+  }
   // Match the lost executable bits seen on copied checkouts.
-  await chmod(join(root, 'scripts/tailscale-serve.sh'), 0o644)
+  await chmod(join(root, 'scripts/network/tailscale.sh'), 0o644)
   const server = `
     const fs = require('node:fs');
     const path = require('node:path');

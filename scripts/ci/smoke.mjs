@@ -1,4 +1,4 @@
-// Run only against a disposable QA database/server. Creates and deletes its own test room.
+// Real HTTP/WebSocket scenarios. Use only a disposable QA backend; removes its test room.
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 
