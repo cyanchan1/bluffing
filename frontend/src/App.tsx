@@ -1,14 +1,16 @@
 import { AnimatePresence, motion, MotionConfig } from 'motion/react'
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useGameStore } from './store'
 import type { Card, Member, Player, RoomSummary } from './types'
 import { CardBack } from './CardBack'
+import { PlayerAvatar } from './PlayerAvatar'
+import { SpellingChallenge } from './SpellingChallenge'
 import { DeckShop } from './DeckShop'
 import { Modal } from './Modal'
 import { Leaderboards } from './Leaderboards'
 import { skinNames, tableSkins } from './presentation'
-import { PlayHistory, RoundFeedback, TurnOrder, Wallets } from './GameFeedback'
-import { StageInfo, TableActivity } from './TableActivity'
+import { PlayHistory, RoundFeedback, Wallets } from './GameFeedback'
+import { TableSeats, TableActivity } from './TableActivity'
 
 const ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
 
@@ -209,6 +211,7 @@ function WaitingRoom() {
           {absent > 0 && <p className="ready-state">{room.players.length - absent}/{room.players.length} here · everyone must be inside to start.</p>}
         </div>}
       </section>
+      <SpellingChallenge />
       <Leaderboards />
       <DeckShop />
     </motion.div>
@@ -216,7 +219,7 @@ function WaitingRoom() {
 }
 
 function PlayerRow({ member, index, self, canKick, onKick }: { member: Member; index: number; self: boolean; canKick: boolean; onKick: () => void }) {
-  return <div className="player-row"><div className="seat">0{index + 1}</div><div className="avatar small">{initials(member.displayName)}</div>
+  return <div className="player-row"><div className="seat">0{index + 1}</div><div className="avatar small"><PlayerAvatar avatar={member.equippedAvatar} /></div>
     <div className="player-identity"><strong><IdentityName name={member.displayName} tag={member.identityTag} />{self && ' · You'}</strong>
       <span>{member.host ? 'Table host' : 'Player'} <PresenceStatus status={member.presence} /></span><span className={`edition-chip edition-${member.equippedSkin?.toLowerCase() ?? 'classic'}`}>✦ {skinNames[member.equippedSkin ?? 'CLASSIC']}</span></div>
     <b className="coins">◆ {member.balance}</b>{canKick && <button className="kick-button" onClick={onKick}>KICK</button>}</div>
@@ -227,40 +230,37 @@ function GameTable() {
   const [selected, setSelected] = useState<string[]>([])
   const [rank, setRank] = useState('A')
   const game = room?.game
+  const handScroll = useRef<HTMLDivElement>(null)
+  const previousHand = useRef(new Set<string>())
+  useEffect(() => {
+    const ids = (game?.hand ?? []).map(card => card.id)
+    if (ids.some(id => !previousHand.current.has(id)) && handScroll.current) {
+      handScroll.current.scrollLeft = 0
+    }
+    previousHand.current = new Set(ids)
+  }, [game?.hand])
   useEffect(() => { setSelected([]) }, [game?.currentPlayerId, game?.poolSize])
   if (!room || !player || !game) return null
-  const myTurn = connected && game.currentPlayerId === player.id && game.phase === 'ACTIVE'
+  const spellingRunning = game.spelling?.stage === 'ACTIVE'
+  const myTurn = connected && !spellingRunning && game.currentPlayerId === player.id && game.phase === 'ACTIVE'
   const participating = game.hands.some(hand => hand.playerId === player.id)
   const skins = tableSkins(room)
   const risk = game.generation * selected.length * 10
-  const rewardGeneration = myTurn ? game.generation : game.lastClaim?.generation ?? game.generation
-  const rewardCards = myTurn ? selected.length : game.lastClaim?.cardCount ?? 0
-  const rewardValue = myTurn ? risk : game.lastClaim?.risk ?? 0
-  const rewardLabel = myTurn ? 'POTENTIAL REWARD' : game.pendingClaim ? 'PENDING PLAY VALUE' : 'NEXT PLAY VALUE'
   const play = () => { command('PLAY', selected, game.targetRank ? undefined : rank); setSelected([]) }
 
   return (
     <motion.div className="game page" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-      <TopBar />
       <RoundFeedback />
-      <TurnOrder room={room} playerId={player.id} connected={connected} />
-      <div className="game-layout">
-        <aside className="left-rail">
-          <StageInfo room={room} connected={connected} />
-          <Wallets room={room} playerId={player.id} />
-          <div className="round-label"><span>DECLARED RANK</span><strong>{game.targetRank ? `${game.targetRank}s` : 'Unset'}</strong></div>
-          <motion.div className="risk-box" animate={{ scale: selected.length ? [1, 1.025, 1] : 1 }} transition={{ duration: .24 }}>
-            <div className="risk-heading"><span>{rewardLabel}</span><b>◇</b></div>
-            <div className="risk-formula" aria-label={`${rewardGeneration} times ${rewardCards}`}>
-              <div className="risk-factor generation"><strong>{rewardGeneration}</strong><em>GEN</em></div>
-              <b className="risk-operator">×</b>
-              <div className="risk-factor cards-factor"><strong>{rewardCards}</strong><em>CARDS</em></div>
-            </div>
-            <div className="risk-payout"><span>× 10</span><strong>{rewardValue}</strong><b>◆</b></div>
-          </motion.div>
-        </aside>
-
+      <SpellingChallenge />
+      <div className="battle-top">
+        <div className="current-play-bar"><TableActivity room={room} myTurn={myTurn} /></div>
+        <details className="history-menu"><summary>Recent plays <span>{game.plays?.length ?? 0}</span></summary><PlayHistory room={room} /></details>
+        <details className="battle-details"><summary>My wallet</summary><Wallets room={room} playerId={player.id} /></details>
+      </div>
+      <TopBar />
+      <div className="game-layout battle-layout">
         <section className="felt-wrap">
+          <div className="table-arena">
           <div className={`felt turn-skin-${skins.turn.toLowerCase()}`}>
             <div className="turn-aura" key={`${game.currentPlayerId}-${skins.turn}`}><CardBack skin={skins.turn} surface /><div className="aura-rings" /></div>
             <div className="felt-line" />
@@ -271,11 +271,13 @@ function GameTable() {
                   : <><div className="pool-preview"><CardBack skin={skins.turn} compact /></div><strong>Open the round</strong></>}
               </motion.div>
             </AnimatePresence>
-            <TableActivity room={room} myTurn={myTurn} />
+          </div>
+          <TableSeats room={room} playerId={player.id} connected={connected} />
           </div>
           {!participating && <div className="my-seat">{player.root ? 'ROOT' : 'HOST'} · SPECTATING</div>}
           {participating && <section className="hand-area">
             {game.pendingClaim && game.hands.some(hand => hand.playerId === game.pendingClaim?.playerId && hand.cardCount === 0) && <p className="final-play-notice" role="status">Final hand pending: Truth Check to challenge, or play / fold to accept. Victory is not confirmed yet.</p>}
+            <div className="hand-caption"><span>YOUR HAND <b>{game.hand.length}</b></span><span>{myTurn ? 'Select cards to play' : 'Waiting for your turn'}</span></div>
             <div className="hand-controls">
               {!game.targetRank && myTurn && <label>DECLARE AS<select value={rank} onChange={e => setRank(e.target.value)}>{ranks.map(item => <option key={item}>{item}</option>)}</select></label>}
               <div className="action-buttons">
@@ -284,10 +286,9 @@ function GameTable() {
                 <button className="action play" disabled={!myTurn || selected.length === 0} onClick={play}><strong>PLAY {selected.length || ''}</strong><span>◇ {risk} if safe</span></button>
               </div>
             </div>
-            <div className="cards" aria-label="Your hand"><div className="cards-track">{game.hand.map((card, index) => <PlayingCard key={card.id} card={card} index={index}
+            <div ref={handScroll} className="cards" aria-label="Your hand"><div className="cards-track">{game.hand.map((card, index) => <PlayingCard key={card.id} card={card} index={index}
               selected={selected.includes(card.id)} disabled={!myTurn} onClick={() => setSelected(items => items.includes(card.id) ? items.filter(id => id !== card.id) : [...items, card.id])} />)}</div></div>
           </section>}
-          <PlayHistory room={room} />
         </section>
       </div>
     </motion.div>
@@ -295,11 +296,12 @@ function GameTable() {
 }
 
 function PlayingCard({ card, selected, disabled, onClick, index }: { card: Card; selected: boolean; disabled: boolean; onClick: () => void; index: number }) {
+  const special = card.rank === 'SPELL'
   const red = card.suit === 'HEARTS' || card.suit === 'DIAMONDS'
-  const suit = { SPADES: '♠', HEARTS: '♥', DIAMONDS: '♦', CLUBS: '♣' }[card.suit]
-  return <motion.button layout aria-label={`${card.rank} of ${card.suit.toLowerCase()}`} aria-pressed={selected} className={`playing-card ${red ? 'red' : ''} ${selected ? 'selected' : ''}`} disabled={disabled} onClick={onClick}
+  const suit = special ? '✦' : { SPADES: '♠', HEARTS: '♥', DIAMONDS: '♦', CLUBS: '♣' }[card.suit]
+  return <motion.button layout aria-label={`${card.rank} of ${card.suit.toLowerCase()}`} aria-pressed={selected} className={`playing-card ${special ? 'spell-card' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''}`} disabled={disabled} onClick={onClick}
     initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: selected ? -22 : 0 }} transition={{ delay: Math.min(index * .025, .35) }}>
-    <span>{card.rank}<small>{suit}</small></span><b>{suit}</b><span className="bottom">{card.rank}<small>{suit}</small></span>
+    <span>{special ? "SPELL" : card.rank}<small>{suit}</small></span><b>{suit}</b>{special && <em className="spell-card-label">10 SECOND<br />SPELLING TRAP</em>}<span className="bottom">{special ? "SPELL" : card.rank}<small>{suit}</small></span>
   </motion.button>
 }
 

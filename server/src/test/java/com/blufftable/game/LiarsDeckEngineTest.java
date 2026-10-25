@@ -39,7 +39,7 @@ class LiarsDeckEngineTest {
 
         GameView result = engine.view(roomId, first).orElseThrow();
         assertThat(result.poolSize()).isZero();
-        assertThat(result.hand()).hasSize(26);
+        assertThat(result.hand()).hasSize(27);
         assertThat(result.currentPlayerId()).isEqualTo(second);
         verify(rewards).credit(roomId, second, 20L);
     }
@@ -202,7 +202,7 @@ class LiarsDeckEngineTest {
         assertThat(view(challenger).plays().getLast().revealedCards()).containsExactly(card);
         assertThat(view(challenger).outcomes().getLast().revealedCards()).containsExactly(card);
         assertThat(receipt.declaredRank()).isEqualTo(card.rank());
-        assertThat(result.hand()).hasSize(27);
+        assertThat(result.hand()).hasSize(28);
         verify(rewards).credit(roomId, first, 20);
         verifyNoMoreInteractions(rewards);
     }
@@ -268,11 +268,11 @@ class LiarsDeckEngineTest {
         verifyNoInteractions(rewards);
         engine.command(view(first).currentPlayerId(), new GameCommand(roomId, GameAction.FOLD, List.of(), null));
         assertThat(view(first).winnerId()).isEqualTo(first);
-        assertThat(earned(first)).isEqualTo(260 + 125);
+        assertThat(earned(first)).isEqualTo(270 + 125);
         assertThat(view(first).pendingClaim()).isNull();
         assertThat(view(first).outcomes().getLast().type()).isEqualTo("GAME_WON");
         assertThat(view(first).outcomes().getLast().revealedCards()).isEmpty();
-        verify(rewards).credit(roomId, first, 260);
+        verify(rewards).credit(roomId, first, 270);
         verify(rewards).credit(roomId, first, 125);
         engine.start(roomId, List.of(member(one), member(two)), new GameStartSettings(1, 3));
         assertThat(earned(first)).isZero();
@@ -304,22 +304,22 @@ class LiarsDeckEngineTest {
             }
         }
         assertThat(earned(first)).isZero();
-        verify(rewards).credit(roomId, second, 520);
+        verify(rewards).credit(roomId, second, 540);
         verifyNoMoreInteractions(rewards);
     }
 
     @Test
-    void truthfulFinalCardWinsOnlyAfterCheck() {
+    void truthfulFinalHandIncludingWildcardWinsOnlyAfterCheck() {
         engine.start(roomId, List.of(member(one), member(two)), new GameStartSettings(1, 1));
         UUID first = view(one).currentPlayerId();
         Card card = view(first).hand().getFirst();
-        playCard(first, card, card.rank());
+        engine.command(first, new GameCommand(roomId, GameAction.PLAY, view(first).hand().stream().map(Card::id).toList(), card.rank()));
         assertThat(view(first).phase()).isEqualTo("ACTIVE");
         engine.command(view(first).currentPlayerId(), new GameCommand(roomId, GameAction.CHALLENGE, List.of(), null));
         assertThat(view(first).winnerId()).isEqualTo(first);
-        assertThat(earned(first)).isEqualTo(145);
+        assertThat(earned(first)).isEqualTo(165);
         assertThat(view(first).plays().getLast().status()).isEqualTo("TRUTH");
-        verify(rewards).credit(roomId, first, 20);
+        verify(rewards).credit(roomId, first, 40);
         verify(rewards).credit(roomId, first, 125);
         verifyNoMoreInteractions(rewards);
     }
@@ -331,7 +331,7 @@ class LiarsDeckEngineTest {
         UUID second = view(first).currentPlayerId();
         playCard(second, view(second).hand().getFirst(), null);
         assertThat(view(first).winnerId()).isEqualTo(first);
-        assertThat(view(second).hand()).hasSize(26);
+        assertThat(view(second).hand()).hasSize(27);
         assertThat(view(second).plays().getLast().status()).isEqualTo("PASSED");
         assertThat(view(second).plays().getLast().revealedCards()).isEmpty();
     }
@@ -347,7 +347,7 @@ class LiarsDeckEngineTest {
         assertThat(view(first).winnerId()).isNull();
         engine.depart(roomId, second);
         assertThat(view(first).phase()).isEqualTo("ACTIVE");
-        assertThat(view(first).hand()).hasSize(3);
+        assertThat(view(first).hand()).hasSize(4);
         assertThat(view(first).plays().getLast().status()).isEqualTo("VOIDED");
         verifyNoInteractions(rewards);
     }

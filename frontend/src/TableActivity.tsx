@@ -1,14 +1,13 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { useEffect, useRef, useState } from 'react'
 import { skinNames } from './presentation'
-import type { GameView, RoomView } from './types'
+import { PlayerAvatar } from './PlayerAvatar'
+import { useGameStore } from './store'
+import type { RoomView } from './types'
 
-type Play = NonNullable<GameView['plays']>[number]
-
-function PlayerName({ room, id }: { room: RoomView; id: string | null }) {
+function PlayerName({ room, id, showTag = true }: { room: RoomView; id: string | null; showTag?: boolean }) {
   const player = room.players.find(player => player.id === id)
     ?? room.records.find(player => player.playerId === id)
-  return <span className="activity-player-name">{player?.displayName ?? 'Player'}{player && <small>#{player.identityTag}</small>}</span>
+  return <span className="activity-player-name">{player?.displayName ?? 'Player'}{showTag && player && <small>#{player.identityTag}</small>}</span>
 }
 
 export function StageInfo({ room, connected }: { room: RoomView; connected: boolean }) {
@@ -40,35 +39,17 @@ export function StageInfo({ room, connected }: { room: RoomView; connected: bool
 export function TableActivity({ room, myTurn }: { room: RoomView; myTurn: boolean }) {
   const game = room.game!
   const latestPlay = game.plays?.at(-1)
-  // Initial snapshots and reconnects show the last play in the rail without replaying it.
-  const cursor = useRef({ gameId: game.gameId, playId: latestPlay?.id ?? 0 })
-  const [announcement, setAnnouncement] = useState<Play | null>(null)
   const reduceMotion = useReducedMotion()
-  useEffect(() => {
-    if (cursor.current.gameId !== game.gameId) {
-      cursor.current = { gameId: game.gameId, playId: latestPlay?.id ?? 0 }
-      setAnnouncement(null)
-      return
-    }
-    if (!latestPlay || latestPlay.id <= cursor.current.playId) return
-    cursor.current.playId = latestPlay.id
-    setAnnouncement(latestPlay)
-  }, [game.gameId, latestPlay])
-  useEffect(() => {
-    if (!announcement) return
-    const timer = window.setTimeout(() => setAnnouncement(null), 2800)
-    return () => window.clearTimeout(timer)
-  }, [announcement])
   const turnKey = `${game.currentPlayerId}-${latestPlay?.id ?? 0}-${game.generation}-${game.consecutiveFolds}`
   return <>
     <div className="table-play-layer" aria-live="polite" aria-atomic="true">
-      <AnimatePresence mode="wait">{announcement && <motion.div className="table-play-announcement" key={announcement.id}
+      <AnimatePresence mode="wait">{latestPlay ? <motion.div className="table-play-announcement" key={latestPlay.id}
         initial={{ opacity: 0, y: reduceMotion ? 0 : 22, scale: reduceMotion ? 1 : .85 }}
         animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: reduceMotion ? 0 : -14 }}
         transition={{ type: 'spring', stiffness: 260, damping: 22 }}>
-        <span className="play-announcement-player"><PlayerName room={room} id={announcement.playerId} /> <span>played</span></span>
-        <strong className="play-announcement-claim">{announcement.cardCount} <span>×</span> {announcement.declaredRank}</strong>
-      </motion.div>}</AnimatePresence>
+        <span className="play-announcement-player"><PlayerName room={room} id={latestPlay.playerId} showTag={false} /> <span>played</span></span>
+        <strong className="play-announcement-claim">{latestPlay.cardCount} <span>×</span> {latestPlay.declaredRank}</strong>
+      </motion.div> : <div className="table-play-empty">No cards played yet · Open the round</div>}</AnimatePresence>
     </div>
     <div className="your-turn-anchor">
       <AnimatePresence mode="wait">{myTurn && <motion.div className="your-turn-cue" key={turnKey} role="status"
@@ -79,4 +60,28 @@ export function TableActivity({ room, myTurn }: { room: RoomView; myTurn: boolea
       </motion.div>}</AnimatePresence>
     </div>
   </>
+}
+
+// Rotate around the viewer once; advancing a turn never moves the seats.
+export function TableSeats({ room, playerId, connected }: { room: RoomView; playerId: string; connected: boolean }) {
+  const { player, kickPlayer } = useGameStore()
+  const spelling = room.game!.spelling
+  const spellingRunning = spelling?.stage === "ACTIVE"
+  const hands = room.game!.hands
+  const selfIndex = hands.findIndex(hand => hand.playerId === playerId)
+  const seats = selfIndex < 0 ? hands : [...hands.slice(selfIndex), ...hands.slice(0, selfIndex)]
+  return <ol className="table-seats" aria-label="Players around the table">{seats.map((hand, index) => {
+    const member = room.players.find(member => member.id === hand.playerId)
+    const angle = Math.PI / 2 + index * Math.PI * 2 / seats.length
+    const current = !spellingRunning && room.game!.currentPlayerId === hand.playerId
+    const self = hand.playerId === playerId
+    return <li key={hand.playerId} className={`table-seat ${current ? 'current' : ''} ${self ? 'self' : ''}`}
+      style={self ? undefined : { left: `${50 + 44 * Math.cos(angle)}%`, top: `${50 + 43 * Math.sin(angle)}%` }}
+      aria-current={current ? 'step' : undefined}>
+      <div className="seat-avatar" aria-hidden="true"><PlayerAvatar avatar={member?.equippedAvatar} /><span>{hand.cardCount}</span></div>
+      <strong title={`${member?.displayName ?? 'Player'} #${member?.identityTag ?? ''}`}>{member?.displayName ?? 'Player'}</strong>
+      <small>{self ? 'YOU · ' : ''}{spellingRunning ? 'SPELLING' : current ? connected ? 'THINKING…' : 'RECONNECTING' : member?.presence === 'OFFLINE' ? 'OFFLINE' : `${hand.cardCount} cards`}</small>
+      {(player?.root || room.hostId === playerId) && !self && <button className="seat-remove" aria-label={`Kick ${member?.displayName ?? 'Player'}`} onClick={() => void kickPlayer(room.id, hand.playerId)}>×</button>}
+    </li>
+  })}</ol>
 }

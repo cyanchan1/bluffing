@@ -42,6 +42,31 @@ class RoomLifecycleTest {
         service.enter(room, host, hostSession);
     }
 
+    @Test void spellingDeadlineSettlesThroughTheScheduledTransactionalService() {
+        service.enter(room, guest, guestSession);
+        var initial = service.start(room, host, new StartGameRequest(1, 3)).game();
+        UUID defender = initial.currentPlayerId();
+        UUID challenger = defender.equals(host) ? guest : host;
+        Card special = service.view(room, defender).game().hand().stream().filter(Card::isSpell).findFirst().orElseThrow();
+        service.command(defender, new GameCommand(room, GameAction.PLAY, java.util.List.of(special.id()), "A"));
+        service.command(challenger, new GameCommand(room, GameAction.CHALLENGE, java.util.List.of(), null));
+        GameEngine engine = engines.require(GameType.LIARS_DECK);
+        java.util.Map<?, ?> games = (java.util.Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(engine, "games");
+        Object state = games.get(room);
+        synchronized (state) {
+            Object spelling = org.springframework.test.util.ReflectionTestUtils.getField(state, "spelling");
+            org.springframework.test.util.ReflectionTestUtils.setField(spelling, "deadline", System.currentTimeMillis() - 1);
+        }
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(3)).untilAsserted(() -> {
+            var settled = service.view(room, host).game().spelling();
+            assertThat(settled.stage()).isEqualTo("COMPLETE");
+            assertThat(settled.results()).hasSize(2).allMatch(result -> !result.correct() && result.drawn() == 1);
+        });
+        assertThat(service.view(room, defender).game().hand()).hasSize(4);
+        assertThat(service.view(room, challenger).game().hand()).hasSize(6);
+        assertThat(service.view(room, host).status()).isEqualTo(RoomStatus.IN_GAME);
+    }
+
     @Test void allMembersMustBeInsideAndAnActiveDealCannotBeRestarted() {
         assertThatThrownBy(() -> service.start(room, host, new StartGameRequest(1, 5)))
             .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Every seated player");
@@ -119,6 +144,48 @@ class RoomLifecycleTest {
         service.kick(room, host, third);
         assertThat(service.view(room, host).status()).isEqualTo(RoomStatus.LOBBY);
         assertThat(memberships.findByRoomIdAndPlayerId(room, third).orElseThrow().isActive()).isFalse();
+    }
+
+    @Test void paidAvatarsChargeOncePersistAndRequireOwnership() throws Exception {
+        assertThatThrownBy(() -> service.avatar(room, host, new AvatarRequest(Avatar.PORTRAIT)))
+            .hasMessageContaining("Unlock");
+        assertThatThrownBy(() -> service.avatar(room, host, new AvatarRequest(Avatar.GREEN_CHARACTER), true))
+            .hasMessageContaining("Not enough");
+        rewards.credit(room, host, 5500);
+        var first = CompletableFuture.runAsync(() -> service.avatar(room, host, new AvatarRequest(Avatar.PORTRAIT), true));
+        var second = CompletableFuture.runAsync(() -> service.avatar(room, host, new AvatarRequest(Avatar.PORTRAIT), true));
+        CompletableFuture.allOf(first, second).get(10, TimeUnit.SECONDS);
+        assertThat(memberships.findByRoomIdAndPlayerId(room, host).orElseThrow().getBalance()).isEqualTo(5000);
+        service.avatar(room, host, new AvatarRequest(Avatar.GREEN_CHARACTER), true);
+        assertThat(memberships.findByRoomIdAndPlayerId(room, host).orElseThrow().getBalance()).isZero();
+        assertThat(service.view(room, guest).players()).anyMatch(p -> p.id().equals(host) && p.equippedAvatar().equals("GREEN_CHARACTER"));
+        assertThat(service.view(room, guest).avatars()).anyMatch(a -> a.id().equals("PORTRAIT") && !a.owned() && a.price() == 500);
+        service.enter(room, guest, guestSession);
+        service.start(room, host, new StartGameRequest(1, 5));
+        rewards.credit(room, guest, 500);
+        assertThatThrownBy(() -> service.avatar(room, guest, new AvatarRequest(Avatar.PORTRAIT), true)).hasMessageContaining("between deals");
+        service.avatar(room, host, new AvatarRequest(Avatar.PORTRAIT));
+        service.stop(room, host, new StopGameRequest(service.view(room, host).game().gameId()));
+        service.kick(room, host, guest);
+        service.join(room, guest);
+        assertThat(service.view(room, host).avatars()).anyMatch(a -> a.id().equals("GREEN_CHARACTER") && a.owned() && a.price() == 5000);
+    }
+
+    @Test void freeAvatarsPersistAndAreVisibleToOtherPlayersWithoutChangingWallets() {
+        long balance = memberships.findByRoomIdAndPlayerId(room, host).orElseThrow().getBalance();
+        service.avatar(room, host, new AvatarRequest(Avatar.BOXING_CAT));
+        assertThat(memberships.findByRoomIdAndPlayerId(room, host).orElseThrow().getEquippedAvatar()).isEqualTo("BOXING_CAT");
+        assertThat(memberships.findByRoomIdAndPlayerId(room, host).orElseThrow().getBalance()).isEqualTo(balance);
+        assertThat(service.view(room, guest).players()).anyMatch(p -> p.id().equals(host) && p.equippedAvatar().equals("BOXING_CAT"));
+        assertThat(service.view(room, guest).players()).anyMatch(p -> p.id().equals(guest) && p.equippedAvatar().equals("DEFAULT"));
+        UUID outsider = players.save(new Player(UUID.randomUUID(), "Outsider")).getId();
+        assertThatThrownBy(() -> service.avatar(room, outsider, new AvatarRequest(Avatar.BOXING_CAT)))
+            .hasMessageContaining("Join this room");
+        service.kick(room, host, guest);
+        assertThatThrownBy(() -> service.avatar(room, guest, new AvatarRequest(Avatar.BOXING_CAT)))
+            .hasMessageContaining("Join this room");
+        service.avatar(room, host, new AvatarRequest(Avatar.DEFAULT));
+        assertThat(service.view(room, host).players()).anyMatch(p -> p.id().equals(host) && p.equippedAvatar().equals("DEFAULT"));
     }
 
     @Test void cosmeticsBelongToBuyerAndChargeExactlyOnce() throws Exception {

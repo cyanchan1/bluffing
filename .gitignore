@@ -24,6 +24,8 @@ build/
 !.env.template
 
 # Database backups and runtime logs
+.local/
+typescript
 .backups/
 *.log
 npm-debug.log*

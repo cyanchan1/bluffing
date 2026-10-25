@@ -20,10 +20,12 @@ public final class ApiModels {
     public record CreateRoomRequest(@Size(max = 40) String name, @NotNull GameType gameType) {}
     public record StartGameRequest(int deckCount, Integer cardsPerPlayer) {}
     public record StopGameRequest(UUID gameId) {}
+    public record AvatarView(String id, String name, long price, boolean owned) {}
+    public record AvatarRequest(@NotNull com.blufftable.domain.Avatar avatarId) {}
     public record SkinRequest(@NotNull com.blufftable.domain.CardSkin skinId) {}
     public record SkinView(String id, String name, String effect, long price, boolean owned) {}
     public record MemberView(UUID id, String displayName, String identityTag, int seatIndex, long balance,
-                             boolean host, String presence, String equippedSkin) {}
+                             boolean host, String presence, String equippedSkin, String equippedAvatar) {}
     public record PlayerRecord(UUID playerId, String displayName, String identityTag,
                                long wins, long currentStreak, long bestStreak) {}
     public record RoomSummary(UUID id, String name, GameType gameType, RoomStatus status, UUID hostId,
@@ -31,6 +33,6 @@ public final class ApiModels {
                               Instant createdAt, boolean joined) {}
     public record RoomView(UUID id, String name, GameType gameType, RoomStatus status, UUID hostId,
                            List<MemberView> players, GameView game, List<SkinView> skins,
-                           List<PlayerRecord> records, String notice) {}
+                           List<PlayerRecord> records, String notice, List<AvatarView> avatars) {}
     public record ErrorView(String message) {}
 }

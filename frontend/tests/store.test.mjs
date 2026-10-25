@@ -361,5 +361,5 @@ test('an overflowing hand stays left-scrollable without clipping its first card'
   assert.match(css,/\.cards-track \{[^}]*justify-content: flex-start/)
   assert.match(css,/\.playing-card:first-child \{ margin-left: auto; \}/)
   assert.match(css,/\.playing-card:last-child \{ margin-right: auto; \}/)
-  assert.match(css,/scroll-padding-inline: 14px/)
+  assert.match(css,/scroll-padding-inline: 24px/)
 })
