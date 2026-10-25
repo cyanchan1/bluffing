@@ -1,6 +1,6 @@
-export type GameType = 'LIARS_DECK'
+export type GameType = 'LIARS_DECK' | 'LIARS_DECK_PLUS'
 export type RoomStatus = 'LOBBY' | 'IN_GAME'
-export type Suit = 'SPADES' | 'HEARTS' | 'DIAMONDS' | 'CLUBS'
+export type Suit = 'SPADES' | 'HEARTS' | 'DIAMONDS' | 'CLUBS' | 'JOKER'
 
 export interface Player { id: string; displayName: string; identityTag: string; root: boolean }
 export interface Card { id: string; rank: string; suit: Suit }

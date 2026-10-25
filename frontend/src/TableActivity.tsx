@@ -1,6 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
-import { skinNames } from './presentation'
 import type { GameView, RoomView } from './types'
 
 type Play = NonNullable<GameView['plays']>[number]
@@ -9,32 +8,6 @@ function PlayerName({ room, id }: { room: RoomView; id: string | null }) {
   const player = room.players.find(player => player.id === id)
     ?? room.records.find(player => player.playerId === id)
   return <span className="activity-player-name">{player?.displayName ?? 'Player'}{player && <small>#{player.identityTag}</small>}</span>
-}
-
-export function StageInfo({ room, connected }: { room: RoomView; connected: boolean }) {
-  const game = room.game!
-  const current = room.players.find(player => player.id === game.currentPlayerId)
-  const lastPlay = game.plays?.at(-1)
-  const skin = current?.equippedSkin ?? 'CLASSIC'
-  const reduceMotion = useReducedMotion()
-  return <section className={`stage-panel turn-skin-${skin.toLowerCase()}`} aria-label="Player activity">
-    <motion.div className="stage-current" key={game.currentPlayerId}
-      initial={{ opacity: 0, x: reduceMotion ? 0 : -12 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: .25 }}>
-      <div className="stage-heading"><span>ON STAGE</span><b aria-hidden="true">✦</b></div>
-      <strong className="stage-name"><PlayerName room={room} id={game.currentPlayerId} /></strong>
-      <span className="stage-edition">{skinNames[skin]}</span>
-      <div className="stage-thinking" role="status">
-        {connected ? <>THINKING<span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span></> : 'RECONNECTING…'}
-      </div>
-    </motion.div>
-    <div className="stage-last-play" aria-live="polite" aria-atomic="true">
-      <span className="stage-last-label">LAST PLAYED</span>
-      {lastPlay ? <motion.div key={lastPlay.id} initial={{ opacity: 0, y: reduceMotion ? 0 : 6 }} animate={{ opacity: 1, y: 0 }}>
-        <PlayerName room={room} id={lastPlay.playerId} />
-        <strong className="stage-last-claim">{lastPlay.cardCount} <span>×</span> {lastPlay.declaredRank}</strong>
-      </motion.div> : <p>No play yet</p>}
-    </div>
-  </section>
 }
 
 export function TableActivity({ room, myTurn }: { room: RoomView; myTurn: boolean }) {

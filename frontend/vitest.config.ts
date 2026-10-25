@@ -13,7 +13,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html', 'lcov', 'json-summary'],
       // The VM-isolated store suite runs separately; measure these UI boundaries here.
-      include: ['src/presentation.ts', 'src/Modal.tsx', 'src/Leaderboards.tsx', 'src/GameFeedback.tsx'],
+      include: ['src/presentation.ts', 'src/Modal.tsx', 'src/Leaderboards.tsx', 'src/GameFeedback.tsx', 'src/gameModes.ts', 'src/PlusRules.tsx'],
       thresholds: { lines: 80, statements: 80, functions: 75, branches: 70 },
     },
   },

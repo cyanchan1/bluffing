@@ -112,8 +112,10 @@ class LiarsDeckEngineTest {
     void departingCurrentPlayerAdvancesToNextSeat() {
         List<UUID> seats = List.of(one, two, UUID.randomUUID());
         engine.start(roomId, seats.stream().map(LiarsDeckEngineTest::member).toList(), new GameStartSettings(1, 5));
-        UUID current = engine.view(roomId, one).orElseThrow().currentPlayerId();
-        UUID next = seats.get((seats.indexOf(current) + 1) % seats.size());
+        GameView started = engine.view(roomId, one).orElseThrow();
+        UUID current = started.currentPlayerId();
+        List<UUID> gameOrder = started.hands().stream().map(GameView.HandCount::playerId).toList();
+        UUID next = gameOrder.get((gameOrder.indexOf(current) + 1) % gameOrder.size());
         engine.depart(roomId, current);
         assertThat(engine.view(roomId, next).orElseThrow().currentPlayerId()).isEqualTo(next);
         engine.depart(roomId, current); // Duplicate socket close is harmless.

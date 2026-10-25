@@ -13,9 +13,8 @@ export function DeckShop() {
   const balance = member?.balance ?? 0
   const purchasesLocked = room.status === 'IN_GAME'
   return <section className="deck-shop" aria-labelledby={titleId}>
-    <div className="shop-heading"><div><p className="eyebrow">YOUR COLLECTION · THIS ROOM</p><h2 id={titleId}>Own the <em>spotlight.</em></h2></div>
+    <div className="shop-heading"><h2 id={titleId}>Own the <em>spotlight.</em></h2>
       <div className="shop-wallet"><span>YOUR ROOM COINS</span><strong>◆ {balance.toLocaleString()}</strong></div></div>
-    <p className="shop-scope">Your deck. Your turn. Everyone sees the show.</p>
     <div className="skin-grid">{(room.skins ?? []).map(skin => {
       const equipped = skin.id === member?.equippedSkin
       const affordable = balance >= skin.price

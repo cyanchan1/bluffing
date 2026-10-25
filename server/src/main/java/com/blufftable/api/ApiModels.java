@@ -18,7 +18,9 @@ public final class ApiModels {
     public record RenamePlayerRequest(@NotBlank @Size(max = 24) String displayName) {}
     public record PlayerView(UUID id, String displayName, String identityTag, boolean root) {}
     public record CreateRoomRequest(@Size(max = 40) String name, @NotNull GameType gameType) {}
-    public record StartGameRequest(int deckCount, Integer cardsPerPlayer) {}
+    public record StartGameRequest(int deckCount, Integer cardsPerPlayer, boolean randomDeckCount) {
+        public StartGameRequest(int deckCount, Integer cardsPerPlayer) { this(deckCount, cardsPerPlayer, false); }
+    }
     public record StopGameRequest(UUID gameId) {}
     public record SkinRequest(@NotNull com.blufftable.domain.CardSkin skinId) {}
     public record SkinView(String id, String name, String effect, long price, boolean owned) {}

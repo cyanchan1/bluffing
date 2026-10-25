@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.web.server.ResponseStatusException;
@@ -42,14 +43,103 @@ class RoomLifecycleTest {
         service.enter(room, host, hostSession);
     }
 
-    @Test void allMembersMustBeInsideAndAnActiveDealCannotBeRestarted() {
+    @Test void twoActivePlayersAreRequiredAndAnActiveDealCannotBeRestarted() {
         assertThatThrownBy(() -> service.start(room, host, new StartGameRequest(1, 5)))
-            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Every seated player");
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("At least two players");
         service.enter(room, guest, guestSession);
         var started = service.start(room, host, new StartGameRequest(1, 5));
         assertThat(started.game().hands()).hasSize(2);
         assertThatThrownBy(() -> service.start(room, host, new StartGameRequest(1, 5)))
             .hasMessageContaining("already running");
+    }
+
+    @ParameterizedTest @EnumSource(GameType.class)
+    void awayAndOfflineSeatsSitOutWithoutLosingBalancesOrWinStreaks(GameType type) {
+        UUID table = type == GameType.LIARS_DECK ? room
+            : service.create(host, new CreateRoomRequest("Online players only", type)).id();
+        if (!table.equals(room)) service.join(table, guest);
+        service.enter(table, host, hostSession);
+        service.enter(table, guest, guestSession);
+        UUID away = players.save(new Player(UUID.randomUUID(), "Away")).getId();
+        UUID offline = players.save(new Player(UUID.randomUUID(), "Offline")).getId();
+        service.join(table, away); service.join(table, offline);
+        String awaySession = UUID.randomUUID().toString();
+        presence.authenticate(awaySession, away); // Online, but not inside this room.
+        rewards.credit(table, away, 321); rewards.credit(table, offline, 432);
+        var awaySeat = memberships.findByRoomIdAndPlayerId(table, away).orElseThrow();
+        awaySeat.recordResult(true); awaySeat.recordResult(true); memberships.save(awaySeat);
+
+        var started = service.start(table, host, type == GameType.LIARS_DECK_PLUS
+            ? new StartGameRequest(0, null, true) : new StartGameRequest(1, null));
+        assertThat(started.players()).hasSize(4);
+        assertThat(started.players()).filteredOn(player -> player.id().equals(away))
+            .extracting(MemberView::presence).containsExactly("AWAY");
+        assertThat(started.players()).filteredOn(player -> player.id().equals(offline))
+            .extracting(MemberView::presence).containsExactly("OFFLINE");
+        assertThat(started.game().participants()).containsExactlyInAnyOrder(host, guest);
+        assertThat(started.game().hands()).extracting(GameView.HandCount::playerId).containsExactlyInAnyOrder(host, guest);
+        assertThat(started.game().deckCount()).isBetween(1, 2);
+        assertThat(started.game().cardsPerPlayer()).isEqualTo(started.game().deckCount() * (type == GameType.LIARS_DECK_PLUS ? 27 : 26));
+        assertThat(memberships.findByRoomIdAndPlayerId(table, away).orElseThrow().getGameStartBalance()).isNull();
+        assertThat(memberships.findByRoomIdAndPlayerId(table, offline).orElseThrow().getGameStartBalance()).isNull();
+        assertThatThrownBy(() -> service.enter(table, away, awaySession)).hasMessageContaining("not in this deal");
+        service.departed(table, away); // A sitting-out account disconnecting cannot alter the deal.
+        assertThat(service.view(table, host).game().hands()).hasSize(2);
+
+        UUID winner = started.game().currentPlayerId();
+        var hand = service.view(table, winner).game().hand();
+        service.command(winner, new GameCommand(table, GameAction.PLAY, hand.stream().map(Card::id).toList(), "A"));
+        UUID responder = service.view(table, host).game().currentPlayerId();
+        service.command(responder, new GameCommand(table, GameAction.FOLD, java.util.List.of(), null));
+        var finished = service.view(table, host);
+        assertThat(finished.game().winnerId()).isEqualTo(winner);
+        var awayRecord = finished.records().stream().filter(record -> record.playerId().equals(away)).findFirst().orElseThrow();
+        assertThat(awayRecord.wins()).isEqualTo(2);
+        assertThat(awayRecord.currentStreak()).isEqualTo(2);
+        assertThat(awayRecord.bestStreak()).isEqualTo(2);
+        assertThat(memberships.findByRoomIdAndPlayerId(table, away).orElseThrow().getBalance()).isEqualTo(321);
+        assertThat(memberships.findByRoomIdAndPlayerId(table, offline).orElseThrow().getBalance()).isEqualTo(432);
+
+        // Custom hand capacity, too, is calculated against the two present players, not four seats.
+        var next = service.start(table, host, new StartGameRequest(1, 20));
+        assertThat(next.game().hands()).allMatch(count -> count.cardCount() == 20);
+        long before = memberships.findByRoomIdAndPlayerId(table, host).orElseThrow().getBalance();
+        rewards.credit(table, host, 100);
+        service.stop(table, host, new StopGameRequest(next.game().gameId()));
+        assertThat(memberships.findByRoomIdAndPlayerId(table, host).orElseThrow().getBalance()).isEqualTo(before);
+        assertThat(memberships.findByRoomIdAndPlayerId(table, away).orElseThrow().getBalance()).isEqualTo(321);
+        assertThat(memberships.findByRoomIdAndPlayerId(table, offline).orElseThrow().getBalance()).isEqualTo(432);
+    }
+
+    @Test void multipleTabsFromOnePlayerDoNotMeetTheTwoPlayerMinimum() {
+        String otherTab = UUID.randomUUID().toString();
+        presence.authenticate(otherTab, host);
+        service.enter(room, host, otherTab);
+        assertThatThrownBy(() -> service.start(room, host, new StartGameRequest(1, null)))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("At least two players");
+    }
+
+    @Test void plusRoomPersistsItsTypeAndRoutesRandomDecksToItsOwnEngine() {
+        UUID plus = service.create(host, new CreateRoomRequest("Plus room", GameType.LIARS_DECK_PLUS)).id();
+        service.join(plus, guest);
+        service.enter(plus, host, hostSession);
+        service.enter(plus, guest, guestSession);
+        assertThat(rooms.findById(plus).orElseThrow().getGameType()).isEqualTo(GameType.LIARS_DECK_PLUS);
+        var started = service.start(plus, host, new StartGameRequest(0, null, true));
+        assertThat(started.gameType()).isEqualTo(GameType.LIARS_DECK_PLUS);
+        assertThat(started.game().deckCount()).isBetween(1, 2);
+        assertThat(started.game().hand()).hasSize(started.game().deckCount() * 27);
+        assertThat(engines.require(GameType.LIARS_DECK).view(plus, host)).isEmpty();
+        assertThatThrownBy(() -> service.start(plus, guest, new StartGameRequest(0, null, true)))
+            .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test void classicRoomRejectsRandomDecksWithoutChangingPersistentState() {
+        service.enter(room, guest, guestSession);
+        assertThatThrownBy(() -> service.start(room, host, new StartGameRequest(1, null, true)))
+            .isInstanceOf(GameRuleException.class);
+        assertThat(service.view(room, host).status()).isEqualTo(RoomStatus.LOBBY);
+        assertThat(memberships.findByRoomIdAndPlayerId(room, host).orElseThrow().getGameStartBalance()).isNull();
     }
 
     @ParameterizedTest
@@ -115,7 +205,7 @@ class RoomLifecycleTest {
         service.start(room, host, new StartGameRequest(1, 5));
         presence.leaveRoom(guestSession); service.departed(room, guest);
         assertThat(service.view(room, host).game().hands()).hasSize(2);
-        assertThatThrownBy(() -> service.enter(room, guest, guestSession)).hasMessageContaining("left this deal");
+        assertThatThrownBy(() -> service.enter(room, guest, guestSession)).hasMessageContaining("not in this deal");
         service.kick(room, host, third);
         assertThat(service.view(room, host).status()).isEqualTo(RoomStatus.LOBBY);
         assertThat(memberships.findByRoomIdAndPlayerId(room, third).orElseThrow().isActive()).isFalse();

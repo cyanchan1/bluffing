@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Player, RoomSummary, RoomView, SkinId } from './types'
+import type { GameType, Player, RoomSummary, RoomView, SkinId } from './types'
 
 type GameAction = 'PLAY' | 'FOLD' | 'CHALLENGE'
 
@@ -16,13 +16,13 @@ interface Store {
   identify: (displayName: string) => Promise<void>
   renamePlayer: (displayName: string) => Promise<void>
   loadRooms: () => Promise<void>
-  createRoom: (name: string) => Promise<void>
+  createRoom: (name: string, gameType?: GameType) => Promise<void>
   joinRoom: (roomId: string) => Promise<void>
   deleteRoom: (roomId: string) => Promise<void>
   kickPlayer: (roomId: string, playerId: string) => Promise<void>
   openRoom: (roomId: string) => Promise<void>
   leaveRoom: () => void
-  startGame: (deckCount: number, cardsPerPlayer: number | null) => Promise<void>
+  startGame: (deckCount: number, cardsPerPlayer: number | null, randomDeckCount?: boolean) => Promise<void>
   changeSkin: (skinId: SkinId, purchase: boolean) => Promise<void>
   stopGame: (gameId: string | null) => Promise<boolean>
   command: (action: GameAction, cardIds?: string[], declaredRank?: string) => void
@@ -129,14 +129,14 @@ export const useGameStore = create<Store>((set, get) => ({
     } catch (error) { set({ error: message(error) }) }
   },
 
-  createRoom: async (name) => {
+  createRoom: async (name, gameType = 'LIARS_DECK') => {
     const player = get().player
     if (!player || get().loading) return
     const request = ++navigation
     set({ loading: true, error: null })
     try {
       const room = await api<RoomView>('/api/rooms', {
-        method: 'POST', body: JSON.stringify({ name, gameType: 'LIARS_DECK' }),
+        method: 'POST', body: JSON.stringify({ name, gameType }),
       })
       if (request !== navigation) return
       set({ room, loading: false })
@@ -197,13 +197,13 @@ export const useGameStore = create<Store>((set, get) => ({
     void get().loadRooms()
   },
 
-  startGame: async (deckCount, cardsPerPlayer) => {
+  startGame: async (deckCount, cardsPerPlayer, randomDeckCount = false) => {
     const { player, room } = get()
     if (!player || !room) return
     set({ loading: true, error: null })
     try {
       await api<RoomView>(`/api/rooms/${room.id}/start`, {
-        method: 'POST', body: JSON.stringify({ deckCount, cardsPerPlayer }),
+        method: 'POST', body: JSON.stringify({ deckCount, cardsPerPlayer, randomDeckCount }),
       })
       set({ loading: false })
     } catch (error) { set({ error: message(error), loading: false }) }

@@ -114,14 +114,11 @@ public class RoomService {
         Room room = lockRoom(roomId);
         requireHost(room, playerId);
         if (room.getStatus() == RoomStatus.IN_GAME) throw conflict("A game is already running");
-        List<RoomMembership> members = memberships.findByRoomIdAndActiveTrueOrderBySeatIndex(roomId);
-        if (members.stream().anyMatch(member -> !presence.isInRoom(member.getPlayer().getId(), roomId))) {
-            throw conflict("Every seated player must be inside this room before dealing");
-        }
-        GameStartSettings settings = new GameStartSettings(request.deckCount(), request.cardsPerPlayer());
-        if (settings.deckCount() < 1 || settings.deckCount() > 8) {
-            throw new GameRuleException("Deck count must be between 1 and 8");
-        }
+        // Durable room seats are not the game roster: away/offline members sit this deal out.
+        List<RoomMembership> members = memberships.findByRoomIdAndActiveTrueOrderBySeatIndex(roomId).stream()
+                .filter(member -> presence.isInRoom(member.getPlayer().getId(), roomId)).toList();
+        if (members.size() < 2) throw conflict("At least two players must be online inside this room before dealing");
+        GameStartSettings settings = new GameStartSettings(request.deckCount(), request.cardsPerPlayer(), request.randomDeckCount());
         // Persist the pre-deal wallet checkpoint before any game reward can settle.
         memberships.findByRoomId(roomId).forEach(RoomMembership::commitGameBalance);
         members.forEach(RoomMembership::snapshotGameBalance);
@@ -214,7 +211,7 @@ public class RoomService {
         var game = engines.require(room.getGameType()).view(room.getId(), playerId);
         if (game.filter(g -> "ACTIVE".equals(g.phase()) && g.hands().stream()
             .noneMatch(h -> h.playerId().equals(playerId))).isPresent()) {
-            throw conflict("You left this deal. Wait for the next game to enter again");
+            throw conflict("You are not in this deal. Wait for the next game to enter");
         }
     }
 

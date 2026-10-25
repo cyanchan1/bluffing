@@ -43,18 +43,25 @@ async function connect(player) {
 }
 
 const host = await account('Smoke host'), guest = await account('Smoke guest'), third = await account('Smoke third')
+const offline = await account('Smoke offline'), away = await account('Smoke away')
 let room
 try {
   const h = await connect(host), g = await connect(guest), t = await connect(third)
+  await connect(away) // Connected account, but never enters this room.
   room = await request(host, '/rooms', {name: 'Disposable smoke test', gameType: 'LIARS_DECK'}, 'POST', 201)
   await request(guest, `/rooms/${room.id}/join`)
   await request(third, `/rooms/${room.id}/join`)
+  await request(offline, `/rooms/${room.id}/join`)
+  await request(away, `/rooms/${room.id}/join`)
   h.send('SYNC_ROOM', {roomId:room.id})
   await h.wait(m => m.type === 'ROOM_STATE' && m.payload.players.find(p => p.id === host.id).presence === 'ACTIVE')
   await request(host, `/rooms/${room.id}/start`, {deckCount:1,cardsPerPlayer:5}, 'POST', 409)
   g.send('SYNC_ROOM', {roomId:room.id}); t.send('SYNC_ROOM', {roomId:room.id})
-  await h.wait(m => m.type === 'ROOM_STATE' && m.payload.players.every(p => p.presence === 'ACTIVE'))
-  await request(host, `/rooms/${room.id}/start`, {deckCount:1,cardsPerPlayer:5})
+  await h.wait(m => m.type === 'ROOM_STATE' && m.payload.players.filter(p => p.presence === 'ACTIVE').length === 3)
+  const startedWithSitouts = await request(host, `/rooms/${room.id}/start`, {deckCount:1,cardsPerPlayer:5})
+  assert.deepEqual(new Set(startedWithSitouts.game.participants), new Set([host.id, guest.id, third.id]))
+  assert.equal(startedWithSitouts.players.find(p => p.id === offline.id).presence, 'OFFLINE')
+  assert.equal(startedWithSitouts.players.find(p => p.id === away.id).presence, 'AWAY')
   await h.wait(m => m.type === 'ROOM_STATE' && m.payload.game?.phase === 'ACTIVE')
   g.send('LEAVE_ROOM')
   await h.wait(m => m.type === 'ROOM_STATE' && m.payload.game?.hands.length === 2)
@@ -64,14 +71,15 @@ try {
   const ended = await h.wait(m => m.type === 'ROOM_STATE' && m.payload.game?.phase === 'FINISHED')
   assert.equal(ended.payload.status, 'LOBBY')
   assert.equal(ended.payload.game.winnerId, null)
-  assert.equal(ended.payload.players.length, 3)
+  assert.equal(ended.payload.players.length, 5)
   assert.ok(ended.payload.players.every(p => p.balance === 0))
   await request(host, `/rooms/${room.id}/skins/purchase`, {skinId:'AURORA'}, 'POST', 409)
   await request(host, `/rooms/${room.id}/skins/equip`, {skinId:'CLASSIC'}, 'PUT')
   // Complete actual deals, exercising durable payouts and records (not seeded counters).
   await request(host, `/rooms/${room.id}/players/${third.id}`, undefined, 'DELETE', 204)
   g.send('SYNC_ROOM', {roomId:room.id})
-  await g.wait(m => m.type === 'ROOM_STATE' && m.payload.status === 'LOBBY' && m.payload.players.every(p => p.presence === 'ACTIVE'))
+  await g.wait(m => m.type === 'ROOM_STATE' && m.payload.status === 'LOBBY'
+    && m.payload.players.length === 4 && m.payload.players.filter(p => p.presence === 'ACTIVE').length === 2)
   async function winHost() {
     const started = await request(host, `/rooms/${room.id}/start`, {deckCount:1,cardsPerPlayer:3})
     if (started.game.currentPlayerId !== host.id) {
@@ -94,6 +102,7 @@ try {
   const won = wins.at(-1)
   assert.equal(won.records.find(r=>r.playerId === host.id).wins,5)
   assert.equal(won.records.find(r=>r.playerId === host.id).bestStreak,5)
+  assert.ok(won.records.filter(r => [offline.id, away.id].includes(r.playerId)).every(r => r.wins === 0 && r.currentStreak === 0))
   const earned = wins.reduce((total, result) => total + result.game.earnings.find(e=>e.playerId === host.id).amount, 0)
   assert.equal(won.players.find(p=>p.id === host.id).balance,earned)
   const bought = await request(host, `/rooms/${room.id}/skins/purchase`, {skinId:'AURORA'})

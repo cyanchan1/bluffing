@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useGameStore } from './store'
 import { freshOutcomes, gameWallet, outcomeCopy, shouldNotifyOutcome, turnOrder } from './presentation'
 import type { GameOutcome, RoomView } from './types'
+import { suitSymbols } from './gameModes'
 
 function playerName(room: RoomView, id: string) {
   const member = room.players.find(player => player.id === id)
@@ -55,6 +56,7 @@ export function TurnOrder({ room, playerId, connected }: { room: RoomView; playe
   const game = room.game!
   const order = turnOrder(game)
   const mine = game.currentPlayerId === playerId
+  const lastPlay = game.plays?.at(-1)
   const position = order.find(hand => hand.playerId === playerId)?.ahead ?? -1
   const reduceMotion = useReducedMotion()
   const seatsRef = useRef<HTMLOListElement>(null)
@@ -71,17 +73,19 @@ export function TurnOrder({ room, playerId, connected }: { room: RoomView; playe
   return <section className={`turn-order ${mine && connected ? 'your-turn' : ''}`} aria-label="Round order">
     <motion.div className="turn-callout" key={`${game.currentPlayerId}-${connected}`} initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} role="status">
       <span>{!connected ? 'CONNECTION LOST' : mine ? 'YOUR TURN' : position === 1 ? 'YOU’RE NEXT' : 'TURN ORDER'}</span>
-      <strong>{!connected ? 'Waiting for connection…' : mine ? 'Make your move.' : position > 1 ? `${position} turns until you play` : position === 1 ? 'Get your cards ready.' : 'Watching the table'}</strong>
     </motion.div>
-    <ol ref={seatsRef}>{order.map(hand => <li key={hand.playerId} className={`${hand.ahead === 0 ? 'current' : ''} ${hand.playerId === playerId ? 'self' : ''}`} aria-current={hand.ahead === 0 ? 'step' : undefined}>
+    <ol ref={seatsRef}>{order.map(hand => <li key={hand.playerId} className={`${hand.ahead === 0 ? 'current' : ''} ${hand.playerId === playerId ? 'self' : ''} ${lastPlay?.playerId === hand.playerId ? 'last-non-folded' : ''}`} aria-current={hand.ahead === 0 ? 'step' : undefined}>
       {hand.ahead === 0 && <motion.div className="order-active-indicator" layoutId={`active-seat-${game.gameId}`} initial={false}
         transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 350, damping: 32 }} aria-hidden="true"><span>NOW</span></motion.div>}
+      {lastPlay?.playerId === hand.playerId && <span className="last-non-folded-marker" aria-label="Last non-folded player" title="Last non-folded player">LAST NON-FOLDED</span>}
       <span className="order-timing">SEAT {String(hand.seat).padStart(2, '0')} <b aria-hidden="true">→</b></span>
       <strong>{hand.playerId === playerId ? 'You' : room.players.find(member => member.id === hand.playerId)?.displayName ?? 'Player'}</strong>
       <span className="order-detail">#{room.players.find(member => member.id === hand.playerId)?.identityTag} · {hand.cardCount} cards</span>
+      {hand.ahead === 0 && <span className={`order-thinking ${connected ? '' : 'reconnecting'}`} role="status">
+        {connected ? <>THINKING<span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span></> : 'RECONNECTING…'}
+      </span>}
       {(player?.root || room.hostId === playerId) && hand.playerId !== playerId && <button className="order-kick" aria-label={`Kick ${playerName(room, hand.playerId)}`} onClick={() => void kickPlayer(room.id, hand.playerId)}>×</button>}
     </li>)}</ol>
-    <span className="order-loop">↻ Repeats in this order</span>
   </section>
 }
 
@@ -117,7 +121,7 @@ export function RoundFeedback() {
     initial={{ opacity: 0, y: reduceMotion ? 0 : -28, scale: reduceMotion ? 1 : .88 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: reduceMotion ? 0 : -12 }} transition={{ type: 'spring', damping: 19, stiffness: 270 }}>
     <div className="verdict-stamp" aria-hidden="true">{copy.mark}</div>
     <div className="verdict-content"><span className="verdict-label">{event.type.startsWith('CHECK_') ? 'TRUTH CHECK · VERDICT' : event.type === 'PLAY_VOIDED' ? 'REWARD CANCELLED' : 'REWARD CONFIRMED'}</span><h2>{copy.title}</h2><p>{copy.detail}</p>
-      {event.challengerId === player.id && event.revealedCards.length > 0 && <><p className="checked-rank">Claimed {event.declaredRank}s · revealed to you</p><div className="revealed-cards" aria-label="Checked cards">{event.revealedCards.map(card => <span key={card.id} className={card.suit === 'HEARTS' || card.suit === 'DIAMONDS' ? 'red' : ''}>{card.rank}{({SPADES:'♠',HEARTS:'♥',DIAMONDS:'♦',CLUBS:'♣'})[card.suit]}</span>)}</div></>}
+      {event.challengerId === player.id && event.revealedCards.length > 0 && <><p className="checked-rank">Claimed {event.declaredRank}s · revealed to you</p><div className="revealed-cards" aria-label="Checked cards">{event.revealedCards.map(card => <span key={card.id} className={card.suit === 'HEARTS' || card.suit === 'DIAMONDS' ? 'red' : ''}>{card.rank}{suitSymbols[card.suit]}</span>)}</div></>}
       {event.amount > 0 && event.rewardPlayerId === player.id && <div className="verdict-payment"><strong>+{event.amount} ◆</strong><span>BANKED TO YOUR WALLET</span></div>}
     </div><button className="verdict-close" aria-label="Dismiss result" onClick={() => setQueue(previous => previous.slice(1))}>×</button>
   </motion.aside>}</AnimatePresence></div>
@@ -132,7 +136,7 @@ export function PlayHistory({ room }: { room: RoomView }) {
       <div className="play-history-player"><small>#{play.id}</small><strong>{playerName(room, play.playerId)}</strong></div>
       <div className="play-history-claim"><b>{play.cardCount} × {play.declaredRank}</b><span>claimed</span></div>
       <div className="play-history-cards" aria-label={play.revealedCards.length ? 'Cards revealed to you' : play.cardCount + ' hidden cards'}>
-        {play.revealedCards.length ? play.revealedCards.map(card => <span key={card.id} className={card.suit === 'HEARTS' || card.suit === 'DIAMONDS' ? 'red' : ''}>{card.rank}{({SPADES:'♠', HEARTS:'♥', DIAMONDS:'♦', CLUBS:'♣'})[card.suit]}</span>)
+        {play.revealedCards.length ? play.revealedCards.map(card => <span key={card.id} className={card.suit === 'HEARTS' || card.suit === 'DIAMONDS' ? 'red' : ''}>{card.rank}{suitSymbols[card.suit]}</span>)
           : <><span className="hidden-card">?</span><small>× {play.cardCount}</small></>}
       </div>
       <span className={'play-status status-' + play.status.toLowerCase()}>{labels[play.status]}</span>

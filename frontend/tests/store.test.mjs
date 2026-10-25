@@ -85,6 +85,27 @@ test('creating a table works while live authentication is pending and syncs afte
   assert.equal(f.sockets[0].sent.filter(m=>m.type==='SYNC_ROOM').length,1)
 })
 
+test('room creation sends the selected Plus game type instead of hardcoding Classic', async () => {
+  const f = fixture(); await f.identify()
+  const creating = f.store.getState().createRoom('Plus table', 'LIARS_DECK_PLUS')
+  const request = f.requests.find(r => r.path === '/api/rooms')
+  assert.equal(JSON.parse(request.options.body).gameType, 'LIARS_DECK_PLUS')
+  await f.respond('/api/rooms', { ...room, gameType: 'LIARS_DECK_PLUS' })
+  await f.respond('/api/rooms', [])
+  await creating
+  assert.equal(f.store.getState().room.gameType, 'LIARS_DECK_PLUS')
+})
+
+test('random decks are a per-game request and do not change the room type', async () => {
+  const f = fixture(); await f.identify(); f.store.setState({ room: { ...room, gameType: 'LIARS_DECK_PLUS' } })
+  const starting = f.store.getState().startGame(1, null, true)
+  const request = f.requests.find(r => r.path === '/api/rooms/room1/start')
+  assert.deepEqual(JSON.parse(request.options.body), { deckCount: 1, cardsPerPlayer: null, randomDeckCount: true })
+  await f.respond('/api/rooms/room1/start', { ...room, game: { deckCount: 2 } })
+  await starting
+  assert.equal(f.store.getState().room.gameType, 'LIARS_DECK_PLUS')
+})
+
 test('joining works during a disconnect and enters the room after automatic reconnect', async () => {
   const f = fixture(); await f.identify(); f.sockets[0].close()
   const joining = f.store.getState().joinRoom(room.id)
@@ -254,7 +275,7 @@ test('lobby has one entrance transition, not a second per-card entrance', () => 
   const lobbyCard = app.slice(app.indexOf('function RoomCard('),app.indexOf('function Room()'))
   assert.match(lobbyCard, /<article className="room-card">/)
   assert.doesNotMatch(lobbyCard, /initial=|animate=/)
-  assert.match(lobbyCard, /status status-/) // Never reuse the page's .lobby class for a badge.
+  assert.doesNotMatch(lobbyCard, /status status-|timeAgo|Created /)
   assert.doesNotMatch(app.slice(0,app.indexOf('function DeviceCheck')), /AnimatePresence mode="wait"/)
 })
 
@@ -352,7 +373,7 @@ test('waiting room never renders game wallets or payout overlay', () => {
 test('game setup is rendered only for the room host', () => {
   const app = readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8')
   const waiting = app.slice(app.indexOf('function WaitingRoom()'),app.indexOf('function PlayerRow('))
-  assert.match(waiting,/\{isHost && <div className="setup-panel panel">/)
+  assert.match(waiting,/\{isHost && <section className="setup-panel panel" aria-label="Game setup">/)
   assert.doesNotMatch(waiting,/WAITING FOR HOST/)
 })
 

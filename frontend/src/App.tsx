@@ -1,16 +1,16 @@
 import { AnimatePresence, motion, MotionConfig } from 'motion/react'
 import { FormEvent, useEffect, useState } from 'react'
 import { useGameStore } from './store'
-import type { Card, Member, Player, RoomSummary } from './types'
+import type { Card, GameType, Member, Player, RoomSummary } from './types'
 import { CardBack } from './CardBack'
 import { DeckShop } from './DeckShop'
 import { Modal } from './Modal'
 import { Leaderboards } from './Leaderboards'
 import { skinNames, tableSkins } from './presentation'
 import { PlayHistory, RoundFeedback, TurnOrder, Wallets } from './GameFeedback'
-import { StageInfo, TableActivity } from './TableActivity'
-
-const ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+import { TableActivity } from './TableActivity'
+import { gameModes, ranks, suitSymbols } from './gameModes'
+import { PlusRules } from './PlusRules'
 
 export default function App() {
   const { player, room, error, clearError, bootstrapping } = useGameStore()
@@ -88,27 +88,29 @@ function Identity() {
 function Lobby() {
   const { player, rooms, connected, reconnect, loadRooms, createRoom, joinRoom, deleteRoom, openRoom, loading } = useGameStore()
   const [roomName, setRoomName] = useState(randomRoomName)
+  const [gameType, setGameType] = useState<GameType>('LIARS_DECK')
   const [deleteTarget, setDeleteTarget] = useState<RoomSummary | null>(null)
   const [editingProfile, setEditingProfile] = useState(false)
   useEffect(() => { void loadRooms(); const timer = setInterval(loadRooms, 5000); return () => clearInterval(timer) }, [loadRooms])
 
   return (
     <motion.div className="lobby page" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-      <header><Brand /><button className="profile" onClick={() => setEditingProfile(true)}><span className={connected ? 'online' : ''} />
+      <header><Brand /><button className="profile" onClick={() => setEditingProfile(true)}>
         <span className="profile-name">{player && <IdentityName name={player.displayName} tag={player.identityTag} />}{player?.root && <b className="root-badge">ROOT</b>}</span>
         <div className="avatar">{initials(player?.displayName)}</div></button></header>
       {!connected && <div className="lobby-reconnecting" role="status"><strong>Reconnecting to the live table…</strong><button onClick={reconnect}>Reconnect now <span aria-hidden="true">↻</span></button></div>}
       <section className="lobby-intro">
-        <div><p className="eyebrow">TABLE LOBBY</p><h1>Find your <em>next table.</em></h1></div>
-        <form className="create-room" onSubmit={e => { e.preventDefault(); void createRoom(roomName) }}>
-          <div className="create-room-title"><span>HOST A TABLE</span><b>LIAR'S DECK</b></div>
+        <div><h1>Find your <em>next table.</em></h1></div>
+        <form className="create-room" onSubmit={e => { e.preventDefault(); void createRoom(roomName, gameType) }}>
+          <div className="room-type-field"><label htmlFor="room-type">ROOM TYPE</label><select id="room-type" value={gameType} onChange={event => setGameType(event.target.value as GameType)}>
+            {(Object.keys(gameModes) as GameType[]).map(type => <option key={type} value={type}>{gameModes[type].name}</option>)}
+          </select></div>
           <div className="create-field"><label htmlFor="room-name">ROOM NAME</label><div className="generated-name"><input id="room-name" maxLength={40} value={roomName} onChange={e => setRoomName(e.target.value)} placeholder="Midnight Casino" />
             <button type="button" aria-label="Generate another room name" onClick={() => setRoomName(randomRoomName())}>↻</button></div></div>
           <button className="primary compact" disabled={loading || !roomName.trim()}>{loading ? 'Please wait…' : 'Create table'} <b>＋</b></button>
         </form>
       </section>
-      <section className="rooms-section">
-        <div className="section-title"><h2>Open tables</h2><span>{rooms.length} {rooms.length === 1 ? 'room' : 'rooms'}</span></div>
+      <section className="rooms-section" aria-label="Tables">
         {rooms.length === 0 ? <EmptyRooms /> : <div className="room-grid">
           {rooms.map((room, index) => <RoomCard key={room.id} room={room} index={index}
             onJoin={() => room.joined ? void openRoom(room.id) : void joinRoom(room.id)}
@@ -132,10 +134,10 @@ function EmptyRooms() {
 function RoomCard({ room, index, onJoin, onDelete, canDelete, onInspect, disabled }: { room: RoomSummary; index: number; onJoin: () => void; onDelete: () => void; canDelete: boolean; onInspect?: () => void; disabled: boolean }) {
   return (
     <article className="room-card">
-      <div className="room-top"><span className="game-tag">LIAR'S DECK</span><span className={`status status-${room.status.toLowerCase()}`}>{room.status === 'LOBBY' ? 'Open' : 'In play'}</span></div>
+      <div className="room-top"><span className={`game-tag ${room.gameType === 'LIARS_DECK_PLUS' ? 'plus-tag' : ''}`}>{gameModes[room.gameType].name.toUpperCase()}</span></div>
       <div className="room-emblem">{index % 2 ? '♦' : '♠'}</div>
       <h3>{room.name}</h3>
-      <div className="room-meta"><span><b>♟</b> {room.playerCount}/{room.maxPlayers} players</span><span className="active-count"><i /> {room.activePlayerCount} active</span><span>Created {timeAgo(room.createdAt)}</span></div>
+      <div className="room-meta"><span><b>♟</b> {room.playerCount}/{room.maxPlayers} players</span><span className="active-count"><i /> {room.activePlayerCount} active</span></div>
       <div className="room-actions">
         <button className="secondary" disabled={disabled || (!room.joined && (room.status === 'IN_GAME' || room.playerCount >= room.maxPlayers))} onClick={onJoin}>{room.joined ? 'Return to table' : room.status === 'IN_GAME' ? 'Game in progress' : room.playerCount >= room.maxPlayers ? 'Table full' : 'Join table'} <b>→</b></button>
         {onInspect && <button className="secondary inspect-button" onClick={onInspect} disabled={disabled}>Manage</button>}
@@ -160,7 +162,7 @@ function TopBar() {
     if (room?.game?.phase === 'ACTIVE') setConfirmExit(true)
     else leaveRoom()
   }
-  return <><header className="table-header"><Brand /><button className="room-name" onClick={exit} aria-label="Leave room">← <span>{room?.name}</span><b className="mobile-exit">Leave</b></button><div className="connection"><i className={connected ? 'online' : ''} />{connected ? 'LIVE' : <button onClick={reconnect}>RECONNECT ↻</button>}</div></header>
+  return <><header className="table-header"><Brand /><button className="room-name" onClick={exit} aria-label="Leave room">← <span>{room?.name}</span><b className="mobile-exit">Leave</b></button>{!connected && <div className="connection"><button onClick={reconnect}>RECONNECT ↻</button></div>}</header>
     {canStop && <nav className="table-tools" aria-label="Table tools">
       <button className="force-stop" disabled={loading || !connected} onClick={() => setStopTarget({ gameId: room?.game?.gameId ?? null })}>■ Stop deal</button>
     </nav>}
@@ -178,15 +180,20 @@ function TopBar() {
 }
 
 function WaitingRoom() {
-  const { room, player, startGame, kickPlayer, loading, leaveRoom, connected } = useGameStore()
+  const { room, player, startGame, kickPlayer, loading, connected } = useGameStore()
   const [decks, setDecks] = useState(1)
+  const [randomDecks, setRandomDecks] = useState(false)
   const [custom, setCustom] = useState(false)
   const [cards, setCards] = useState(7)
   if (!room || !player) return null
   const isHost = room.hostId === player.id
   const canManage = isHost || player.root
-  const absent = room.players.filter(member => member.presence !== 'ACTIVE').length
-  const validHand = !custom || (Number.isInteger(cards) && cards >= 1 && cards * room.players.length <= decks * 52)
+  const activeCount = room.players.filter(member => member.presence === 'ACTIVE').length
+  const plus = room.gameType === 'LIARS_DECK_PLUS'
+  const random = plus && randomDecks
+  const capacity = gameModes[room.gameType].cardsPerDeck * (random ? 1 : decks)
+  const maxHand = Math.floor(capacity / Math.max(1, activeCount))
+  const validHand = !custom || (Number.isInteger(cards) && cards >= 1 && cards <= maxHand)
   const winner = room.players.find(member => member.id === room.game?.winnerId)
   return (
     <motion.div className="waiting page" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -194,21 +201,21 @@ function WaitingRoom() {
       {room.notice && <div className="match-result" role="status"><b>■ Table reset</b><span>{room.notice}</span></div>}
       {room.game?.phase === 'FINISHED' && <div className="match-result" role="status"><b>{winner ? `♛ ${winner.displayName} #${winner.identityTag} won the deal` : 'Deal ended · not enough players'}</b><span>{winner ? 'Ready for another hand?' : 'No winner bonus. Room wallets restored.'}</span></div>}
       <section className={`waiting-layout ${isHost ? '' : 'no-game-setup'}`}>
-        <div className="waiting-copy"><p className="eyebrow">LIAR'S DECK</p><h1>Waiting <em>room.</em></h1>
-          <button className="text-button" onClick={leaveRoom}>← Back to open tables</button></div>
-        <div className="players-panel panel"><div className="panel-heading"><span>SEATING ORDER</span><b>{room.players.length} / 8</b></div>
+        <section className="players-panel panel" aria-label="Players">
           <div className="player-list">{room.players.map((member, i) => <PlayerRow key={member.id} member={member} index={i} self={member.id === player.id}
             canKick={canManage && member.id !== player.id} onKick={() => void kickPlayer(room.id, member.id)} />)}</div>
           {Array.from({ length: Math.max(0, 2 - room.players.length) }).map((_, i) => <div className="open-seat" key={i}><i /> Waiting for a player…</div>)}
-        </div>
-        {isHost && <div className="setup-panel panel"><div className="panel-heading"><span>GAME SETUP</span><b>PER GAME</b></div>
-          <label>NUMBER OF DECKS<div className="stepper"><button onClick={() => setDecks(Math.max(1, decks - 1))}>−</button><strong>{decks}</strong><button onClick={() => setDecks(Math.min(8, decks + 1))}>＋</button></div></label>
+        </section>
+        {isHost && <section className="setup-panel panel" aria-label="Game setup"><div className="panel-heading"><span>GAME SETUP</span></div>
+          {plus && <label className="random-decks"><input type="checkbox" checked={randomDecks} onChange={event => setRandomDecks(event.target.checked)} />Random decks <strong>1–{Math.max(1, activeCount)}</strong></label>}
+          {!random && <label>NUMBER OF DECKS<div className="stepper"><button onClick={() => setDecks(Math.max(1, decks - 1))}>−</button><strong>{decks}</strong><button onClick={() => setDecks(Math.min(8, decks + 1))}>＋</button></div></label>}
           <div className="toggle-line"><strong>HAND SIZE</strong><button className={`mode-toggle ${custom ? 'on' : ''}`} onClick={() => setCustom(!custom)}><span>AUTO</span><span>CUSTOM</span></button></div>
-          {custom && <label>CARDS PER PLAYER<input type="number" min="1" max={decks * 52} value={cards} onChange={e => setCards(Number(e.target.value))} /></label>}
-          <button className="primary" disabled={room.players.length < 2 || absent > 0 || !validHand || loading || !connected} onClick={() => void startGame(decks, custom ? cards : null)}>{room.players.length < 2 ? 'Need 2 players' : absent ? `Waiting for ${absent} to enter` : !validHand ? 'Not enough cards' : 'Deal the cards'} <b>→</b></button>
-          {absent > 0 && <p className="ready-state">{room.players.length - absent}/{room.players.length} here · everyone must be inside to start.</p>}
-        </div>}
+          {custom && <label>CARDS PER PLAYER<input type="number" min="1" max={maxHand} value={cards} onChange={e => setCards(Number(e.target.value))} /></label>}
+          {random && <p className="random-deck-note">A fresh roll of 1–{Math.max(1, activeCount)} decks each game.{custom ? ` Custom hands must fit one deck: up to ${maxHand} cards each.` : ' Hands are sized after the roll.'}</p>}
+          <button className="primary" disabled={activeCount < 2 || !validHand || loading || !connected} onClick={() => void startGame(decks, custom ? cards : null, random)}>{activeCount < 2 ? 'Need 2 players here' : !validHand ? 'Not enough cards' : 'Deal the cards'} <b>→</b></button>
+        </section>}
       </section>
+      {plus && <PlusRules />}
       <Leaderboards />
       <DeckShop />
     </motion.div>
@@ -226,6 +233,8 @@ function GameTable() {
   const { room, player, command, connected } = useGameStore()
   const [selected, setSelected] = useState<string[]>([])
   const [rank, setRank] = useState('A')
+  const [maximized, setMaximized] = useState(false)
+  const [sideTab, setSideTab] = useState<'wallet' | null>(null)
   const game = room?.game
   useEffect(() => { setSelected([]) }, [game?.currentPlayerId, game?.poolSize])
   if (!room || !player || !game) return null
@@ -236,29 +245,50 @@ function GameTable() {
   const rewardGeneration = myTurn ? game.generation : game.lastClaim?.generation ?? game.generation
   const rewardCards = myTurn ? selected.length : game.lastClaim?.cardCount ?? 0
   const rewardValue = myTurn ? risk : game.lastClaim?.risk ?? 0
-  const rewardLabel = myTurn ? 'POTENTIAL REWARD' : game.pendingClaim ? 'PENDING PLAY VALUE' : 'NEXT PLAY VALUE'
   const play = () => { command('PLAY', selected, game.targetRank ? undefined : rank); setSelected([]) }
 
   return (
-    <motion.div className="game page" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+    <motion.div className={`game page ${maximized ? 'is-maximized' : ''}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
       <TopBar />
       <RoundFeedback />
       <TurnOrder room={room} playerId={player.id} connected={connected} />
       <div className="game-layout">
-        <aside className="left-rail">
-          <StageInfo room={room} connected={connected} />
+        <button className="game-view-toggle" type="button" aria-pressed={maximized} onClick={() => { setMaximized(value => !value); setSideTab(null) }}>
+          <span aria-hidden="true">{maximized ? '⊡' : '⛶'}</span>{maximized ? 'Minimize table' : 'Maximize table'}
+        </button>
+        {!maximized && <aside className="left-rail">
+          <div className="game-mode-label"><strong>{gameModes[room.gameType].name}</strong><span>{game.deckCount} {game.deckCount === 1 ? 'deck' : 'decks'} · {gameModes[room.gameType].cardsPerDeck * game.deckCount} cards</span></div>
+          {room.gameType === 'LIARS_DECK_PLUS' && <PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} />}
           <Wallets room={room} playerId={player.id} />
-          <div className="round-label"><span>DECLARED RANK</span><strong>{game.targetRank ? `${game.targetRank}s` : 'Unset'}</strong></div>
-          <motion.div className="risk-box" animate={{ scale: selected.length ? [1, 1.025, 1] : 1 }} transition={{ duration: .24 }}>
-            <div className="risk-heading"><span>{rewardLabel}</span><b>◇</b></div>
+          <motion.div className="risk-box" aria-label={`Potential reward: generation ${rewardGeneration} times ${rewardCards} cards, ${rewardValue} coins`} animate={{ scale: selected.length ? [1, 1.025, 1] : 1 }} transition={{ duration: .24 }}>
             <div className="risk-formula" aria-label={`${rewardGeneration} times ${rewardCards}`}>
-              <div className="risk-factor generation"><strong>{rewardGeneration}</strong><em>GEN</em></div>
+              <div className="risk-factor generation" aria-label="Generation"><strong>{rewardGeneration}</strong></div>
               <b className="risk-operator">×</b>
-              <div className="risk-factor cards-factor"><strong>{rewardCards}</strong><em>CARDS</em></div>
+              <div className="risk-factor cards-factor" aria-label="Cards"><strong>{rewardCards}</strong></div>
             </div>
             <div className="risk-payout"><span>× 10</span><strong>{rewardValue}</strong><b>◆</b></div>
           </motion.div>
-        </aside>
+        </aside>}
+
+        {maximized && <>
+          <div className="max-table-tabs" aria-label="Table side panels">
+            <button type="button" aria-expanded={sideTab === 'wallet'} onClick={() => setSideTab(sideTab === 'wallet' ? null : 'wallet')}>Wallet &amp; reward</button>
+          </div>
+          <AnimatePresence>
+            {sideTab && <motion.aside className="max-side-panel side-wallet" key={sideTab} aria-label="Wallet and reward"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: .16 }}>
+              <button className="max-panel-close" type="button" aria-label="Close side panel" onClick={() => setSideTab(null)}>×</button>
+              <Wallets room={room} playerId={player.id} />
+              <motion.div className="risk-box" aria-label={`Potential reward: generation ${rewardGeneration} times ${rewardCards} cards, ${rewardValue} coins`}>
+                <div className="risk-formula" aria-label={`${rewardGeneration} times ${rewardCards}`}>
+                  <div className="risk-factor generation" aria-label="Generation"><strong>{rewardGeneration}</strong></div><b className="risk-operator">×</b>
+                  <div className="risk-factor cards-factor" aria-label="Cards"><strong>{rewardCards}</strong></div>
+                </div>
+                <div className="risk-payout"><span>× 10</span><strong>{rewardValue}</strong><b>◆</b></div>
+              </motion.div>
+            </motion.aside>}
+          </AnimatePresence>
+        </>}
 
         <section className="felt-wrap">
           <div className={`felt turn-skin-${skins.turn.toLowerCase()}`}>
@@ -279,9 +309,9 @@ function GameTable() {
             <div className="hand-controls">
               {!game.targetRank && myTurn && <label>DECLARE AS<select value={rank} onChange={e => setRank(e.target.value)}>{ranks.map(item => <option key={item}>{item}</option>)}</select></label>}
               <div className="action-buttons">
-                <button className="action fold" disabled={!myTurn || game.poolSize === 0} onClick={() => command('FOLD')}><strong>FOLD</strong><span>Pass turn</span></button>
-                <button className="action challenge" disabled={!myTurn || !game.lastClaim || game.lastClaim.playerId === player.id} onClick={() => command('CHALLENGE')}><strong>TRUTH CHECK</strong><span>{game.lastClaim ? `Catch a lie → +${game.lastClaim.risk * 2}` : 'No play to check'}</span></button>
-                <button className="action play" disabled={!myTurn || selected.length === 0} onClick={play}><strong>PLAY {selected.length || ''}</strong><span>◇ {risk} if safe</span></button>
+                <button className="action fold" disabled={!myTurn || game.poolSize === 0} onClick={() => command('FOLD')}><strong>FOLD</strong></button>
+                <button className="action challenge" disabled={!myTurn || !game.lastClaim || game.lastClaim.playerId === player.id} onClick={() => command('CHALLENGE')}><strong>TRUTH CHECK</strong></button>
+                <button className="action play" disabled={!myTurn || selected.length === 0} onClick={play}><strong>PLAY {selected.length || ''}</strong></button>
               </div>
             </div>
             <div className="cards" aria-label="Your hand"><div className="cards-track">{game.hand.map((card, index) => <PlayingCard key={card.id} card={card} index={index}
@@ -296,8 +326,9 @@ function GameTable() {
 
 function PlayingCard({ card, selected, disabled, onClick, index }: { card: Card; selected: boolean; disabled: boolean; onClick: () => void; index: number }) {
   const red = card.suit === 'HEARTS' || card.suit === 'DIAMONDS'
-  const suit = { SPADES: '♠', HEARTS: '♥', DIAMONDS: '♦', CLUBS: '♣' }[card.suit]
-  return <motion.button layout aria-label={`${card.rank} of ${card.suit.toLowerCase()}`} aria-pressed={selected} className={`playing-card ${red ? 'red' : ''} ${selected ? 'selected' : ''}`} disabled={disabled} onClick={onClick}
+  const joker = card.rank === 'JOKER'
+  const suit = suitSymbols[card.suit]
+  return <motion.button layout aria-label={joker ? 'Joker (wild card)' : `${card.rank} of ${card.suit.toLowerCase()}`} aria-pressed={selected} className={`playing-card ${joker ? 'joker-card' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''}`} disabled={disabled} onClick={onClick}
     initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: selected ? -22 : 0 }} transition={{ delay: Math.min(index * .025, .35) }}>
     <span>{card.rank}<small>{suit}</small></span><b>{suit}</b><span className="bottom">{card.rank}<small>{suit}</small></span>
   </motion.button>
@@ -351,4 +382,3 @@ function randomRoomName() {
 }
 
 function initials(name?: string) { return (name || '?').split(/\s+/).map(word => word[0]).join('').slice(0, 2).toUpperCase() }
-function timeAgo(value: string) { const mins = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000)); return mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago` : `${Math.floor(mins / 60)}h ago` }
