@@ -81,6 +81,8 @@ bash scripts/start-dev.sh
 
 Open **http://localhost:5173**. The launcher waits for the backend on port **8080**, then starts Vite. Vite proxies `/api` and `/ws` to the backend. Ctrl+C stops both servers and leaves PostgreSQL running.
 
+For solo debugging, open two tabs on the same address. In one tab, use **Switch to debug bot** in the root account's lobby; the other stays root. The bot is a persistent, separate non-root player with its own room balances. Switching applies only to that tab and is available only in the lobby; **Switch to root** returns it to the original account. Root access is granted when opening the app locally on the server machine.
+
 ### macOS
 
 Install Java 21, Node.js, PostgreSQL 16, and Bash with Homebrew. The macOS launcher uses a project-local PostgreSQL data directory on port 5433 and starts the same backend and frontend together:

@@ -43,18 +43,19 @@ function Challenge({ round, volume, onVolumeChange }: { round: SpellingView; vol
     audio.current = player.audio
     context.current = player.context
     gain.current = player.gain
-    player.gain.gain.value = currentVolume.current * MAX_PRONUNCIATION_GAIN
+    if (player.gain) player.gain.gain.value = currentVolume.current * MAX_PRONUNCIATION_GAIN
+    else player.audio.volume = currentVolume.current
     audioHost.current.appendChild(player.audio)
     const reportError = () => setError(true)
-    const updateAudioState = () => setSoundBlocked(player.context.state !== 'running')
+    const updateAudioState = () => setSoundBlocked(Boolean(player.context && player.context.state !== 'running'))
     player.audio.addEventListener('error', reportError)
-    player.context.addEventListener('statechange', updateAudioState)
+    player.context?.addEventListener('statechange', updateAudioState)
     player.audio.src = round.audioUrl
     updateAudioState()
     return () => {
       player.audio.pause()
       player.audio.removeEventListener('error', reportError)
-      player.context.removeEventListener('statechange', updateAudioState)
+      player.context?.removeEventListener('statechange', updateAudioState)
       player.audio.remove()
       audio.current = null
       context.current = null
@@ -63,6 +64,7 @@ function Challenge({ round, volume, onVolumeChange }: { round: SpellingView; vol
   }, [round.audioUrl])
   useEffect(() => {
     if (gain.current) gain.current.gain.value = volume * MAX_PRONUNCIATION_GAIN
+    else if (audio.current) audio.current.volume = volume
   }, [volume])
   useEffect(() => {
     if (!audio.current) return
@@ -76,7 +78,7 @@ function Challenge({ round, volume, onVolumeChange }: { round: SpellingView; vol
         if (cancelled) return
         element.currentTime = 0
         await element.play()
-      } catch { if (!cancelled) setError(true) }
+      } catch { if (!cancelled) setSoundBlocked(true) }
     })()
     return () => { cancelled = true; element.pause() }
   }, [playing])
@@ -91,7 +93,7 @@ function Challenge({ round, volume, onVolumeChange }: { round: SpellingView; vol
       audio.current.currentTime = 0
       await Promise.all([context.current?.resume(), audio.current.play()])
     }
-    catch { setError(true) }
+    catch { setSoundBlocked(true); setError(true) }
   }
   return <Modal label="Spelling challenge" className="spelling-dialog" onClose={() => { if (finished) setDismissed(true) }}>
     <section className="spelling-challenge">

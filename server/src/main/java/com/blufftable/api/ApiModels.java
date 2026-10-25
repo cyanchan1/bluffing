@@ -17,6 +17,7 @@ public final class ApiModels {
                                 @NotBlank @Size(min = 32, max = 200) String deviceToken) {}
     public record RenamePlayerRequest(@NotBlank @Size(max = 24) String displayName) {}
     public record PlayerView(UUID id, String displayName, String identityTag, boolean root) {}
+    public record DebugIdentityView(PlayerView player, String deviceToken) {}
     public record CreateRoomRequest(@Size(max = 40) String name, @NotNull GameType gameType) {}
     public record StartGameRequest(int deckCount, Integer cardsPerPlayer, boolean randomDeckCount) {
         public StartGameRequest(int deckCount, Integer cardsPerPlayer) { this(deckCount, cardsPerPlayer, false); }

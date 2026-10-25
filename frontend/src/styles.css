@@ -670,12 +670,29 @@ input::placeholder { color: #a0aaa4; }
 .battle-page .spelling-challenge { max-width:850px; margin:0 auto; padding:32px; border:1px solid #aa263e; border-radius:20px; color:#f5e9ed; background:linear-gradient(135deg,#190b13,#090a10); box-shadow:0 12px 50px #0008; font-size:16px; }
 .battle-page .spelling-challenge .eyebrow,.battle-page .spelling-challenge a { color:#ff7187; }.battle-page .spelling-challenge h2 { margin:5px 0 15px; font-size:clamp(26px,4vw,40px); }
 .battle-page .spelling-heading { display:flex; justify-content:space-between; gap:20px; align-items:center; }.battle-page .spelling-clock { color:#ff536e; font-size:56px; font-variant-numeric:tabular-nums; }
-.battle-page .spelling-clock small { display:block; font-size:10px; letter-spacing:.15em; }.battle-page .spelling-input { display:flex; gap:10px; }.battle-page .spelling-input input { flex:1; min-width:0; font-size:22px; }
+.battle-page .spelling-clock small { display:block; font-size:10px; letter-spacing:.15em; }
+.battle-page .spelling-challenge form > label { color:#c6b2bd; }
+.battle-page .spelling-input { display:flex; gap:12px; align-items:stretch; margin-top:14px; }
+.battle-page .spelling-input input { flex:1 1 0; width:0; min-width:0; min-height:58px; font-size:22px; color:#f5e9ed; }
+.battle-page .spelling-input .primary { flex:0 0 auto; width:auto; min-width:112px; margin:0; justify-content:center; }
+.battle-page .spelling-challenge .secondary { color:#f5e9ed; border-color:#89747f; font-size:14px; }
 .battle-page .spelling-results > div { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:14px 0; border-bottom:1px solid #ffffff20; }
 .battle-page .spelling-results span { flex:1; overflow-wrap:anywhere; }.battle-page .spelling-results span > b,.battle-page .spelling-results span > small { display:block; font-size:19px; }.battle-page .spelling-results small { margin-top:5px; color:#bda8b0; }
 .battle-page .spelling-footer { display:flex; justify-content:space-between; align-items:center; gap:14px; margin-top:16px; font-size:12px; }
 .battle-page .dialog-surface.spelling-dialog { position:fixed; inset:0; margin:auto; width:min(760px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); overflow:auto; border-radius:20px; }
 .battle-page .spelling-dialog .spelling-challenge { width:100%; max-width:none; margin:0; box-sizing:border-box; }
+.battle-page .spelling-audio-controls { display:flex; align-items:center; gap:18px; margin:8px 0 22px; flex-wrap:wrap; }
+.battle-page .spelling-audio-controls > button { flex:1; min-width:190px; text-align:left; }
+.battle-page .spelling-volume { display:flex; align-items:center; gap:10px; margin:0; font-size:14px; color:#d4bec8; }
+.battle-page .spelling-volume input { width:110px; padding:0; accent-color:#ff536e; }
+.battle-page .spelling-volume output { min-width:44px; font-variant-numeric:tabular-nums; }
+.lobby-identity-controls { display:flex; align-items:center; justify-content:flex-end; gap:16px; flex-wrap:wrap; }
+.debug-identity-switch { flex:none; font-size:14px; padding:10px 14px; color:var(--gold); border-color:#dfb66980; }
+@media (max-width:600px) {
+  .lobby > header { height:auto; min-height:90px; padding:14px 0; gap:12px; }
+  .lobby > header > .brand { flex-shrink:0; }
+  .lobby-identity-controls { gap:8px; }
+}
 @media (max-width:900px) {
   .game.battle-page .battle-top { min-height:128px; padding:58px 16px 12px; }.battle-page .current-play-bar { flex-direction:column; gap:4px; }
   .battle-page .current-play-bar .play-announcement-player { font-size:14px; }.battle-page .current-play-bar .play-announcement-claim { font-size:34px; }
@@ -698,6 +715,7 @@ input::placeholder { color: #a0aaa4; }
   .game.battle-page .battle-layout .hand-area { margin-top:20px; padding:8px 0 0; }.game.battle-page .hand-caption { display:flex; font-size:9px; }
   .game.battle-page .cards-track { height:142px; }.game.battle-page .playing-card { flex-basis:68px; height:104px; margin-left:-19px; }
   .battle-page .current-play-bar .your-turn-cue { padding:6px 9px; font-size:9px; }.battle-page .spelling-challenge { padding:18px; }
-  .battle-page .spelling-input { flex-direction:column; }.battle-page .spelling-results > div { flex-wrap:wrap; gap:8px; }.battle-page .spelling-results > div > strong { width:100%; }
+  .battle-page .spelling-input { flex-direction:column; }.battle-page .spelling-input input { width:100%; flex:auto; }
+  .battle-page .spelling-results > div { flex-wrap:wrap; gap:8px; }.battle-page .spelling-results > div > strong { width:100%; }
   .battle-page .spelling-footer { flex-wrap:wrap; }
 }

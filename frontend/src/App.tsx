@@ -88,7 +88,7 @@ function Identity() {
 }
 
 function Lobby() {
-  const { player, rooms, connected, reconnect, loadRooms, createRoom, joinRoom, deleteRoom, openRoom, loading } = useGameStore()
+  const { player, rooms, connected, reconnect, loadRooms, createRoom, joinRoom, deleteRoom, openRoom, loading, debugMode, switchIdentity } = useGameStore()
   const [roomName, setRoomName] = useState(randomRoomName)
   const [gameType, setGameType] = useState<GameType>('LIARS_DECK')
   const [deleteTarget, setDeleteTarget] = useState<RoomSummary | null>(null)
@@ -97,9 +97,9 @@ function Lobby() {
 
   return (
     <motion.div className="lobby page" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-      <header><Brand /><button className="profile" onClick={() => setEditingProfile(true)}>
+      <header><Brand /><div className="lobby-identity-controls">{(player?.root || debugMode) && <button className="secondary debug-identity-switch" disabled={loading} onClick={() => void switchIdentity()}>{debugMode ? 'Switch to root' : 'Switch to debug bot'}</button>}<button className="profile" onClick={() => setEditingProfile(true)}>
         <span className="profile-name">{player && <IdentityName name={player.displayName} tag={player.identityTag} />}{player?.root && <b className="root-badge">ROOT</b>}</span>
-        <div className="avatar">{initials(player?.displayName)}</div></button></header>
+        <div className="avatar">{initials(player?.displayName)}</div></button></div></header>
       {!connected && <div className="lobby-reconnecting" role="status"><strong>Reconnecting to the live table…</strong><button onClick={reconnect}>Reconnect now <span aria-hidden="true">↻</span></button></div>}
       <section className="lobby-intro">
         <div><h1>Find your <em>next table.</em></h1></div>
